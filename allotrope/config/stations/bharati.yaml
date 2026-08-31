@@ -1,0 +1,137 @@
+# Bharati — Indian Antarctic research station, Larsemann Hills.
+# Commissioned 2012; modular container construction, better insulated than Maitri.
+# Same provenance convention as maitri.yaml: [public] / [derived] / [assumed].
+#
+# The 296 kL Jet A-1 figure below is the anchor for the whole calibration: it is
+# the one hard public number about this station's energy system, and the load and
+# efficiency assumptions here are chosen to reproduce it. See docs/calibration.md.
+
+station:
+  id: bharati
+  name: Bharati
+  latitude_deg: -69.407      # [public]
+  longitude_deg: 76.190      # [public]
+  elevation_m: 35            # [public]
+
+fuel_budget:
+  seasonal_jet_a1_kl: 296.0  # [public] stored fuel per resupply season
+  season_days: 365           # [assumed] annual resupply cycle
+
+occupancy:
+  winter_crew: 25            # [assumed]
+  summer_crew: 65            # [assumed]
+  summer_start_doy: 320
+  summer_end_doy: 60
+  shoulder_days: 14
+
+climate:
+  temp_summer_mean_c: -2.0   # [public] Larsemann Hills is milder than Schirmacher
+  temp_winter_mean_c: -22.0  # [public]
+  temp_diurnal_amp_c: 2.5
+  temp_noise_std_c: 3.0
+  temp_noise_tau_h: 30.0
+  cold_snap_prob_per_day: 0.03
+  cold_snap_depth_c: 10.0
+
+  wind_weibull_k: 2.0
+  wind_scale_summer_ms: 7.5
+  wind_scale_winter_ms: 10.0
+  wind_tau_h: 8.0
+  blizzard_prob_per_day: 0.06
+  blizzard_gust_ms: 27.0
+
+  cloud_mean: 0.60
+  cloud_tau_h: 12.0
+  snow_albedo: 0.80
+
+generation:
+  gensets:
+    - {id: G1, rated_kw: 200, chp_heat_ratio: 1.10}   # [assumed]
+    - {id: G2, rated_kw: 200, chp_heat_ratio: 1.10}
+    - {id: G3, rated_kw: 200, chp_heat_ratio: 1.10}
+
+  genset_common:
+    fuel: jet_a1
+    fuel_lhv_mj_per_l: 34.7
+    sfc_rated_l_per_kwh: 0.27
+    idle_fuel_frac: 0.09
+    min_stable_load_frac: 0.15
+    wet_stack_threshold_frac: 0.30
+    burn_off_threshold_frac: 0.60
+    deposit_accum_per_h: 0.055
+    deposit_burn_per_h: 0.30
+    min_up_time_min: 30
+    min_down_time_min: 20
+    start_fuel_l: 2.0
+    bc_ef_clean_mg_per_kwh: 12.0
+    bc_ef_fouled_mg_per_kwh: 95.0
+
+  pv:
+    rated_kwp: 100.0
+    tilt_deg: 68.0
+    azimuth_deg: 0.0
+    temp_coeff_per_c: -0.0038
+    noct_c: 45.0
+    system_derate: 0.88
+    snow_cover_loss_max: 0.95
+
+  wind:
+    turbines: 2
+    rated_kw_each: 30.0
+    hub_height_m: 18.0
+    ref_height_m: 10.0
+    roughness_length_m: 0.005
+    cut_in_ms: 3.0
+    rated_ms: 12.0
+    cut_out_ms: 20.0
+
+storage:
+  - id: BESS_LFP
+    chemistry: lifepo4
+    location: heated_core
+    capacity_kwh: 320.0
+    max_charge_kw: 100.0
+    max_discharge_kw: 160.0
+    round_trip_efficiency: 0.94
+    soc_min: 0.15
+    soc_max: 0.95
+    min_operating_temp_c: 0.0
+  - id: BESS_LTO
+    chemistry: lto
+    location: exterior
+    capacity_kwh: 90.0
+    max_charge_kw: 90.0
+    max_discharge_kw: 90.0
+    round_trip_efficiency: 0.90
+    soc_min: 0.10
+    soc_max: 0.95
+    min_operating_temp_c: -30.0
+
+loads:
+  electrical:
+    base_kw_per_person: 0.80
+    fixed_kw: 50.0
+    science_summer_kw: 45.0
+    diurnal_amp_frac: 0.18
+    noise_std_frac: 0.06
+    noise_tau_h: 1.5
+
+  thermal:
+    ua_kw_per_c: 1.5                 # [derived] as Maitri, better insulated envelope
+    indoor_setpoint_c: 20.0
+    thermal_capacitance_kwh_per_c: 31.0   # [assumed] envelope + contents, ~12 h time constant
+    # Auxiliary oil-fired boilers burn the same Jet A-1 directly. They are what
+    # actually covers heat that the sets did not recover, and modelling them is
+    # what makes recovered heat worth anything: every kW of CHP heat used is a
+    # kW the boiler does not have to burn fuel for.
+    boiler_rated_kw: 200.0               # [assumed]
+    boiler_efficiency: 0.85              # [public] typical oil-fired boiler
+    water_l_per_person_day: 55.0
+    snow_melt_kwh_per_l: 0.115
+    service_hot_water_kw: 10.0
+    deferrable_fraction: 1.0
+
+criticality:
+  life_support_kw: 50.0
+  min_indoor_temp_c: 16.0
+  reserve_margin_kw: 25.0

@@ -1,0 +1,149 @@
+# Maitri — Indian Antarctic research station, Schirmacher Oasis.
+#
+# PROVENANCE. There is no public operational telemetry from Maitri, so this file
+# is a calibrated synthetic station, not a measured one. Every value carries a
+# `src` tag in the comment beside it:
+#   [public]  geographic / climatic fact from the open literature
+#   [derived] back-calculated from a public figure (see docs/calibration.md)
+#   [assumed] engineering assumption, plausible for a station of this class
+# Change [assumed] values freely; the model is parameterised, not hard-coded.
+
+station:
+  id: maitri
+  name: Maitri
+  latitude_deg: -70.766      # [public]
+  longitude_deg: 11.731      # [public]
+  elevation_m: 130           # [public]
+
+# Occupancy drives both electrical and thermal demand. Day-of-year windows are
+# southern-hemisphere: the summer campaign spans the new year.
+occupancy:
+  winter_crew: 25            # [assumed] typical Indian winter-over team
+  summer_crew: 60            # [assumed] peak summer campaign
+  summer_start_doy: 320      # ~16 Nov [assumed]
+  summer_end_doy: 60         # ~1 Mar  [assumed]
+  shoulder_days: 14          # ramp between winter and summer levels
+
+climate:
+  # Seasonal air temperature is modelled as a sinusoid about these means.
+  temp_summer_mean_c: -5.0   # [public] coastal oasis, Dec-Jan
+  temp_winter_mean_c: -28.0  # [public] Jul-Aug
+  temp_diurnal_amp_c: 2.5    # [public] weak diurnal cycle at high latitude
+  temp_noise_std_c: 3.5      # [assumed] synoptic variability
+  temp_noise_tau_h: 30.0     # [assumed] correlation time of weather systems
+  cold_snap_prob_per_day: 0.04   # [assumed]
+  cold_snap_depth_c: 12.0        # [assumed]
+
+  # Katabatic wind regime: Weibull marginal, autocorrelated in time.
+  wind_weibull_k: 1.9        # [public] typical for coastal Antarctic katabatic
+  wind_scale_summer_ms: 7.0  # [assumed]
+  wind_scale_winter_ms: 9.5  # [assumed] stronger katabatic drainage in winter
+  wind_tau_h: 8.0            # [assumed]
+  blizzard_prob_per_day: 0.05    # [assumed]
+  blizzard_gust_ms: 25.0         # [assumed] above turbine cut-out
+
+  cloud_mean: 0.55           # [assumed] fractional cloud cover
+  cloud_tau_h: 12.0          # [assumed]
+  snow_albedo: 0.80          # [public] fresh snow, drives ground-reflected POA
+
+generation:
+  gensets:
+    # Jet A-1 fuelled CHP sets. Three units, N+1 for the winter-over.
+    # The oversizing here is deliberate and is the problem this project targets:
+    # winter demand sits far below the efficient band of even one unit.
+    - {id: G1, rated_kw: 125, chp_heat_ratio: 1.10}   # [assumed]
+    - {id: G2, rated_kw: 125, chp_heat_ratio: 1.10}
+    - {id: G3, rated_kw: 125, chp_heat_ratio: 1.10}
+
+  genset_common:
+    fuel: jet_a1
+    fuel_lhv_mj_per_l: 34.7            # [public] Jet A-1 lower heating value
+    sfc_rated_l_per_kwh: 0.27          # [public] modern diesel-cycle set at rated load
+    idle_fuel_frac: 0.09               # [assumed] no-load fuel as fraction of rated flow
+    min_stable_load_frac: 0.15         # [assumed]
+    wet_stack_threshold_frac: 0.30     # [public] wet stacking onset below ~30 % load
+    burn_off_threshold_frac: 0.60      # [assumed] load above which deposits clear
+    deposit_accum_per_h: 0.055         # [assumed] deposit units gained per hour at zero load
+    deposit_burn_per_h: 0.30           # [assumed] deposit units cleared per hour at full load
+    min_up_time_min: 30                # [assumed] anti-cycling
+    min_down_time_min: 20              # [assumed]
+    start_fuel_l: 1.5                  # [assumed] fuel per start event
+    bc_ef_clean_mg_per_kwh: 12.0       # [assumed] black-carbon EF, clean combustion
+    bc_ef_fouled_mg_per_kwh: 95.0      # [assumed] EF at full deposit load
+
+  pv:
+    rated_kwp: 50.0            # [assumed]
+    tilt_deg: 70.0             # [assumed] steep, to shed snow and catch low sun
+    azimuth_deg: 0.0           # due north (equator-facing in the south)
+    temp_coeff_per_c: -0.0038  # [public] c-Si power temperature coefficient
+    noct_c: 45.0               # [public]
+    system_derate: 0.88        # [assumed] soiling, wiring, inverter
+    snow_cover_loss_max: 0.95  # [assumed] worst-case output loss when snow-covered
+
+  wind:
+    turbines: 2                # [assumed]
+    rated_kw_each: 10.0        # [assumed] small cold-rated turbines
+    hub_height_m: 15.0         # [assumed]
+    ref_height_m: 10.0         # measurement height for the synthetic wind series
+    roughness_length_m: 0.005  # [public] snow/ice surface
+    cut_in_ms: 3.0             # [assumed]
+    rated_ms: 12.0             # [assumed]
+    cut_out_ms: 20.0           # [assumed] conservative for blizzard survival
+
+storage:
+  # Dual chemistry, per the project premise: LTO survives the unheated exterior,
+  # LiFePO4 lives in the climate-controlled station core.
+  - id: BESS_LFP
+    chemistry: lifepo4
+    location: heated_core      # [assumed]
+    capacity_kwh: 200.0        # [assumed]
+    max_charge_kw: 60.0
+    max_discharge_kw: 100.0
+    round_trip_efficiency: 0.94   # [public] typical LFP
+    soc_min: 0.15
+    soc_max: 0.95
+    min_operating_temp_c: 0.0     # [public] LFP must not charge below freezing
+  - id: BESS_LTO
+    chemistry: lto
+    location: exterior         # [assumed]
+    capacity_kwh: 60.0         # [assumed]
+    max_charge_kw: 60.0
+    max_discharge_kw: 60.0
+    round_trip_efficiency: 0.90   # [public] LTO, lower than LFP
+    soc_min: 0.10
+    soc_max: 0.95
+    min_operating_temp_c: -30.0   # [public] LTO tolerates deep sub-zero charging
+
+loads:
+  electrical:
+    base_kw_per_person: 0.85         # [assumed] galley, lighting, comms, accommodation
+    fixed_kw: 45.0                   # [assumed] always-on: comms, servers, instruments
+    science_summer_kw: 35.0          # [assumed] additional summer laboratory load
+    diurnal_amp_frac: 0.18           # [assumed] activity cycle amplitude
+    noise_std_frac: 0.06             # [assumed]
+    noise_tau_h: 1.5                 # [assumed]
+
+  thermal:
+    # Space heating is a UA * dT model; the station is the thermal envelope.
+    ua_kw_per_c: 1.9                 # [derived] sized so recovered CHP heat covers most space heat
+    indoor_setpoint_c: 20.0          # [assumed]
+    thermal_capacitance_kwh_per_c: 38.0   # [assumed] envelope + contents, ~12 h time constant
+    # Snow melting for potable water is the large, genuinely deferrable load.
+    # It is the primary sink for the burn-off and surplus-renewable strategies.
+    # Auxiliary oil-fired boilers burn the same Jet A-1 directly. They are what
+    # actually covers heat that the sets did not recover, and modelling them is
+    # what makes recovered heat worth anything: every kW of CHP heat used is a
+    # kW the boiler does not have to burn fuel for.
+    boiler_rated_kw: 200.0               # [assumed]
+    boiler_efficiency: 0.85              # [public] typical oil-fired boiler
+    water_l_per_person_day: 55.0     # [assumed]
+    snow_melt_kwh_per_l: 0.115       # [derived] melt from -20 C + heat to 5 C
+    service_hot_water_kw: 8.0        # [assumed]
+    deferrable_fraction: 1.0         # snow melt is fully shiftable within a day
+
+criticality:
+  # The safety-projection layer treats these as inviolable. They are the reason
+  # a learned policy alone is not acceptable at -40 C.
+  life_support_kw: 45.0              # [assumed] equals `loads.electrical.fixed_kw`
+  min_indoor_temp_c: 16.0            # [assumed] hard floor, below setpoint
+  reserve_margin_kw: 20.0            # [assumed] spinning reserve above net demand
