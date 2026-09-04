@@ -77,7 +77,8 @@ run surfaced.
 | Frontend Command Center — see [frontend/README.md](frontend/README.md) | one real screen against live API data; no browser/E2E test tool was available to verify it visually, only build/type-check/component tests and manual curl checks against a live server pair |
 | OpenDSS network twin + inverter-level Volt-Watt — see [docs/network-safety.md](docs/network-safety.md) | implemented and tested for Maitri (single-feeder, real OpenDSS power flow); Bharati has no network config yet; Volt-VAr not implemented (needs reactive-power modelling the plant doesn't have) |
 | Federated learning across stations | planned |
-| MQTT / gRPC control plane, Grafana HMI, containers | planned |
+| gRPC control plane — see [docs/control-plane.md](docs/control-plane.md) | implemented and tested (state distribution + heartbeat, real server/client, real robustness cases); no command-injection RPC by design, no MQTT (documented why), no TLS/auth |
+| Grafana HMI, containers | planned |
 
 ## Results so far
 
@@ -182,6 +183,7 @@ allotrope/
   experiment.py  local, file-based experiment tracking (runs/<run_id>/record.json)
   observability.py  structured JSON logging, see docs/observability.md
   api/           FastAPI backend over the live simulation, see docs/api.md
+  controlplane/  gRPC state distribution + heartbeat, see docs/control-plane.md
 frontend/        React/TypeScript Command Center UI over the API, see frontend/README.md
 docs/            calibration, reinforcement learning, and other design notes
 scripts/         entry points
