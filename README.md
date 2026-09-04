@@ -48,8 +48,13 @@ on station.
 ## Status
 
 Phase 1 (**the plant**) and Phase 2 (**the guarantee**) are complete. Phase 3
-(**the agents**) is implemented, safety-integrated and tested; competitive
-training is in progress, not yet claimed.
+(**the agents**) is implemented, safety-integrated and tested. A 500k-step
+training run cut genset starts by 48% and closed 58% of the fuel gap to the
+best rule-based baseline versus an earlier 60k-step run — real progress, not
+yet a win: still behind `EfficientRuleBased` on fuel and starts. See
+[docs/reinforcement-learning.md](docs/reinforcement-learning.md)'s "Honest
+status" for the full numbers, including a real regression (unmet water) this
+run surfaced.
 
 | Component | State |
 |---|---|

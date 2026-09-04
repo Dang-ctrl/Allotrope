@@ -99,52 +99,65 @@ that file alone. Swapping this for a hosted tracker later is a change to
 
 ## Honest status
 
-**One real run, reported in full.** `hybrid`, Maitri, seed 0, 60 000 env
-steps (`python -m allotrope.train --agent hybrid --station maitri
---total-steps 60000 --episode-steps 336`), evaluated on held-out seed 1 over
-a full synthetic year (`python -m allotrope.evaluate --checkpoint
-runs/hybrid_maitri_seed0_1788552940/checkpoint.pt --station maitri --seed 1
---periods 8760`):
+**Two real runs, reported in full, same seed and evaluation protocol.**
+`hybrid`, Maitri, seed 0, evaluated on held-out seed 1 over a full synthetic
+year (`python -m allotrope.evaluate --checkpoint <checkpoint> --station
+maitri --seed 1 --periods 8760`):
 
-| | Legacy N+1 | Efficient rules | Hybrid, **guarded** | Hybrid, unguarded |
-|---|---|---|---|---|
-| Fuel | 254.6 kL | 214.6 kL | 237.2 kL | 172.2 kL |
-| Black carbon | 71 826 g | 10 845 g | 59 730 g | 29 803 g |
-| Wet-stacking fraction | 0.794 | 0.024 | 0.368 | 0.252 |
-| Genset starts | 21 | 286 | 947 | 1 214 |
-| Critical unserved | 0 kWh | 0 kWh | **0 kWh** | **181 717 kWh** |
-| Freeze violation steps | 0 | 0 | 0 | 0 |
+| | Legacy N+1 | Efficient rules | Hybrid, guarded (60k steps) | Hybrid, guarded (500k steps) | Hybrid, unguarded (500k steps) |
+|---|---|---|---|---|---|
+| Fuel | 254.6 kL | 214.6 kL | 237.2 kL | **224.0 kL** | 155.3 kL |
+| Black carbon | 71 826 g | 10 845 g | 59 730 g | **41 221 g** | 18 399 g |
+| Wet-stacking fraction | 0.794 | 0.024 | 0.368 | **0.172** | 0.148 |
+| Genset starts | 21 | 286 | 947 | **497** | 3 749 |
+| Unmet water | 3 863 kWh | 1 262 kWh | -- | **64 810 kWh** | 79 030 kWh |
+| Critical unserved | 0 kWh | 0 kWh | **0 kWh** | **0 kWh** | 197 146 kWh |
+| Freeze violation steps | 0 | 0 | 0 | 0 | 0 |
+
+(`--`: not reported for the 60k run's writeup. `python -m allotrope.train
+--agent hybrid --station maitri --total-steps 500000 --episode-steps 336
+--warmup-steps 1000 --buffer-capacity 100000` reproduces the 500k run.)
 
 Read this for what it actually shows, not more:
 
-- **The safety claim, demonstrated on this agent specifically.** The
-  unguarded checkpoint -- the same weights, no projection -- loses 181 717 kWh
-  of life-support power over the year. The guarded one loses none. This is
-  the same result `scripts/run_safety_audit.py` reports for hand-designed
-  adversarial policies, now shown for an actual trained network rather than
-  a policy built to attack the projection on purpose. Training did not, and
-  structurally could not, touch this number: the guard sits entirely outside
-  the network.
-- **Beats the incumbent it exists to replace, not yet the best baseline.**
-  237.2 kL versus the legacy fleet's 254.6 kL is real progress on exactly the
-  problem this project states (a fleet loitering below its wet-stacking
-  threshold); `EfficientRuleBased`'s 214.6 kL is still ahead. The gap is
-  explained by genset starts, not commitment strategy: 947 cold starts
-  against the efficient baseline's 286 says the policy has not yet learned
-  what `genset_start_per_event` in `RewardWeights` is pricing at ₹1 500 each.
-  Unguarded starts (1 214) are even higher, which is expected -- an
-  unprojected policy is also thrashing commitment in ways the guard
-  currently absorbs rather than the reward correcting.
-- **60 000 steps is a correctness run, not a competitive one.** The episode
-  return improved monotonically and substantially over the run (roughly
-  -3 900 to -600 on the last-ten-episode mean), which is the signal this
-  phase needed to establish: the agents learn, the pipeline is sound end to
-  end, and the safety guarantee holds throughout. Matching or beating
-  `EfficientRuleBased` on fuel and starts needs materially more training
-  (and likely per-station hyperparameter attention) than one interactive
-  session provides; that is future work, not a claim made here.
-- **Not yet built:** a scenario-based benchmark across hundreds/thousands of
-  seeds with confidence intervals (Section 6 of the project's own roadmap),
-  ONNX export for edge inference, and federated training across Maitri and
-  Bharati. `allotrope/train.py` and `allotrope/evaluate.py` are the
-  foundation those build on, not a replacement for them.
+- **More training closed roughly 60 % of the gap to the best baseline, on
+  the metric the 60k run named as the problem.** Genset starts fell from 947
+  to 497 -- still well above `EfficientRuleBased`'s 286, but the fuel gap to
+  that baseline shrank from 22.6 kL to 9.4 kL, and wet-stacking fraction
+  dropped by more than half (0.368 to 0.172). This is exactly the
+  `genset_start_per_event` penalty finally being learned, as the 60k
+  writeup predicted it would need more training to do -- not a different
+  mechanism, just more of the same one working.
+- **The safety claim holds at 500k steps exactly as it did at 60k, on a
+  policy that has become more dangerous unguarded, not less.** The unguarded
+  checkpoint's fuel dropped further (155.3 kL, below even the guarded
+  figure) because it is now aggressive enough to starve life support to get
+  there: 197 146 kWh of critical load lost, worse than the 60k run's
+  181 717 kWh. The guarded column still loses zero. This is the point of
+  putting the guarantee outside the network rather than in the reward: a
+  policy optimising harder for fuel got *more* willing to cut corners the
+  reward doesn't itself forbid, and the projection caught every instance of
+  it regardless.
+- **A cost the reward under-weights showed up once training pushed hard
+  enough on the ones it doesn't: unmet water.** 64 810 kWh of deferred
+  melting against the efficient baseline's 1 262 kWh is a real regression
+  this run surfaces for the first time, not noise -- `unmet_water_per_kwh`
+  in `RewardWeights` (₹60/kWh) is small next to `fuel_per_l` (₹250/L) and
+  `genset_start_per_event` (₹1 500), so a policy under pressure to cut starts
+  and fuel is trading melting away first. This is worth reward-weight
+  attention before the next training run, not a claim that the current
+  weights are wrong -- they simply have not been tested this hard before.
+- **Still not competitive with `EfficientRuleBased` on fuel or starts.**
+  497 starts and 224.0 kL beat the incumbent (`LegacyNPlusOne`) by a wide
+  margin but remain behind the best rule-based baseline. Whether closing
+  the rest of this gap needs more steps, reward reshaping around the
+  unmet-water finding above, or architecture changes (Section "RL
+  architecture" above) is open; this document states the current numbers
+  rather than predicting which lever closes it.
+- **Not yet built:** ONNX export for edge inference, and federated training
+  across Maitri and Bharati. A scenario-based benchmark across many seeds
+  now exists (`allotrope/evaluate_scenarios.py`, see
+  [docs/evaluation.md](evaluation.md)) for the rule-based baselines; it
+  accepts a trained checkpoint via `--checkpoint` but has not yet been run
+  against one at scale, since a single held-out-seed comparison was the more
+  urgent question this pass answered.
