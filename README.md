@@ -63,6 +63,7 @@ training is in progress, not yet claimed.
 | Gymnasium environment and reward | done |
 | Branching DQN (commitment) + SDDPG (dispatch), safety-integrated | implemented and tested; see [docs/reinforcement-learning.md](docs/reinforcement-learning.md) |
 | Local experiment tracking (`allotrope/experiment.py`, `runs/`) | done |
+| Backend API over the live simulation — see [docs/api.md](docs/api.md) | implemented and tested; no trained checkpoint or frontend wired in yet |
 | Scenario benchmark across hundreds/thousands of seeds | planned |
 | Federated learning across stations | planned |
 | MQTT / gRPC control plane, Grafana HMI, containers | planned |
