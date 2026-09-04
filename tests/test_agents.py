@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 import torch
 
-from allotrope.agents.checkpoint import load, save
+from allotrope.agents.checkpoint import load, load_federated, save, save_federated
 from allotrope.agents.dqn import DQNAgent, DQNConfig, enumerate_commitments
 from allotrope.agents.hybrid import HybridAgent
 from allotrope.agents.replay import ReplayBuffer
@@ -298,3 +298,45 @@ def test_training_never_lets_life_support_go_unserved(cfg):
     for log in logs:
         assert log.critical_unserved_kwh == pytest.approx(0.0, abs=1e-9)
         assert log.freeze_violation_steps == 0.0
+
+
+# -- federated checkpoints -----------------------------------------------
+
+
+def test_federated_checkpoint_loads_at_either_station(cfg, tmp_path):
+    """The whole point of a federated checkpoint: it deploys anywhere compatible."""
+    agent = HybridAgent(cfg)
+    path = tmp_path / "federated.pt"
+    save_federated(agent, ["maitri", "bharati"], path)
+
+    for station_name in ("maitri", "bharati"):
+        restored = load_federated(path, load_station(station_name))
+        assert restored.obs_dim == agent.obs_dim
+
+
+def test_a_federated_checkpoint_is_refused_by_the_single_station_loader(cfg, tmp_path):
+    agent = HybridAgent(cfg)
+    path = tmp_path / "federated.pt"
+    save_federated(agent, ["maitri", "bharati"], path)
+
+    with pytest.raises(ValueError, match="federated checkpoint"):
+        load(path, cfg)
+
+
+def test_a_single_station_checkpoint_is_refused_by_the_federated_loader(cfg, tmp_path):
+    agent = HybridAgent(cfg)
+    path = tmp_path / "agent.pt"
+    save(agent, path)
+
+    with pytest.raises(ValueError, match="not a federated checkpoint"):
+        load_federated(path, cfg)
+
+
+def test_federated_checkpoint_rejects_an_incompatible_asset_count(cfg, tmp_path):
+    agent = HybridAgent(cfg)
+    path = tmp_path / "federated.pt"
+    save_federated(agent, ["maitri"], path)
+
+    mismatched = cfg.__class__(**{**cfg.__dict__, "gensets": cfg.gensets[:2]})
+    with pytest.raises(ValueError, match="action space would not match"):
+        load_federated(path, mismatched)
