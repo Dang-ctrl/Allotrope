@@ -188,6 +188,19 @@ class ThermalLoadSpec:
 
 
 @dataclass(frozen=True)
+class NetworkBranch:
+    length_km: float
+
+
+@dataclass(frozen=True)
+class NetworkSpec:
+    base_kv: float
+    feeder_r1_ohm_per_km: float
+    feeder_x1_ohm_per_km: float
+    branches: dict[str, NetworkBranch]
+
+
+@dataclass(frozen=True)
 class Criticality:
     life_support_kw: float
     min_indoor_temp_c: float
@@ -206,6 +219,7 @@ class StationConfig:
     electrical: ElectricalLoadSpec
     thermal: ThermalLoadSpec
     criticality: Criticality
+    network: NetworkSpec | None = None
     fuel_budget: dict[str, Any] = field(default_factory=dict)
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
@@ -254,6 +268,20 @@ class StationConfig:
             raise ConfigError("wind turbine speeds must satisfy cut_in < rated < cut_out")
 
 
+def _build_network(data: dict[str, Any] | None) -> NetworkSpec | None:
+    if data is None:
+        return None
+    return NetworkSpec(
+        base_kv=float(data["base_kv"]),
+        feeder_r1_ohm_per_km=float(data["feeder_r1_ohm_per_km"]),
+        feeder_x1_ohm_per_km=float(data["feeder_x1_ohm_per_km"]),
+        branches={
+            name: NetworkBranch(length_km=float(b["length_km"]))
+            for name, b in data["branches"].items()
+        },
+    )
+
+
 def _build(data: dict[str, Any]) -> StationConfig:
     gen = _req(data, "generation", "station")
     common = dict(_req(gen, "genset_common", "generation"))
@@ -279,6 +307,7 @@ def _build(data: dict[str, Any]) -> StationConfig:
         ),
         thermal=ThermalLoadSpec(**_req(_req(data, "loads", "root"), "thermal", "loads")),
         criticality=Criticality(**_req(data, "criticality", "root")),
+        network=_build_network(data.get("network")),
         fuel_budget=data.get("fuel_budget", {}),
         raw=data,
     )

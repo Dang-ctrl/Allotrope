@@ -141,6 +141,25 @@ loads:
     service_hot_water_kw: 8.0        # [assumed]
     deferrable_fraction: 1.0         # snow melt is fully shiftable within a day
 
+network:
+  # A minimal radial LV feeder off the genset bus, used by the OpenDSS twin for
+  # Volt-VAr / Volt-Watt inverter control. There is no public wiring diagram for
+  # either station, so topology and impedances are [assumed] -- chosen to be a
+  # plausible LV microgrid feeder, not a survey of the real one.
+  base_kv: 0.4
+  feeder_r1_ohm_per_km: 0.30   # [assumed] typical 0.4 kV LV cable
+  feeder_x1_ohm_per_km: 0.08   # [assumed]
+  branches:
+    # length_km sets how electrically "far" each bus sits from the genset bus,
+    # which is what makes voltage rise/droop at that bus meaningful at all.
+    pv: {length_km: 0.10}
+    wind: {length_km: 0.15}
+    bess_heated_core: {length_km: 0.03}
+    bess_exterior: {length_km: 0.08}
+    load_critical: {length_km: 0.05}
+    load_general: {length_km: 0.07}
+    load_melt: {length_km: 0.06}
+
 criticality:
   # The safety-projection layer treats these as inviolable. They are the reason
   # a learned policy alone is not acceptable at -40 C.
