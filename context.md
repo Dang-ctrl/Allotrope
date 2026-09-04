@@ -19,7 +19,7 @@ Last updated: 2026-09-05, end of Phase 5 (autonomous overnight session).
 | Tests | 204 passing |
 | Commits | `db4b9ab` Plant · `6d42c9b` Guarantee · `d0f9ca9` Docs · `14e4303` Agents · `6f11585` Twin · `ca028cf` System · `c35a68a` Phase 3 results · `8866e8d` Federated checkpoint fix |
 
-**This was an autonomous overnight session** (user asked to "complete the project" while asleep, using judgment for decisions without stopping to ask). Everything below was built, tested, and committed without further confirmation. Nothing has been pushed to the remote yet as of this writing — confirm with the user before pushing, since the repo is public and this is a large, unreviewed batch of work.
+**This was an autonomous overnight session** (user asked to "complete the project" while asleep, using judgment for decisions without stopping to ask). Everything below was built, tested, committed, and pushed to `main` without further confirmation, per that instruction. The user has not reviewed this batch of work — it is large (11 commits, ~7 500 lines) and everything in it should be treated as freshly landed rather than settled, especially the two negative/partial results (federated training, Phase 5 infrastructure) called out below.
 
 ## Environment
 
