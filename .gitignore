@@ -11,3 +11,6 @@ data/generated/
 .env
 .DS_Store
 *.pptx
+runs/
+*.pt
+*.onnx
