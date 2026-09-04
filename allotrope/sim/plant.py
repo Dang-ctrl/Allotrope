@@ -150,8 +150,20 @@ class PolarMicrogrid:
     # -- observation -------------------------------------------------------
 
     def observe(self) -> dict[str, Any]:
-        """The plant's externally visible condition, before this step is dispatched."""
+        """The plant's externally visible condition, before this step is dispatched.
+
+        Battery temperature is re-derated against *this* step's ambient/indoor
+        reading before the envelope is reported, exactly as `step()` will do
+        before it executes -- not the reading left over from the previous
+        step. Reporting the stale figure understates how far a cold snap has
+        already cut a pack's capability by the time a command computed from
+        this observation is executed, which is exactly the gap a safety
+        projection using every last watt of reported headroom can fall
+        through.
+        """
         i = min(self.state.step_index, self.n_steps - 1)
+        for battery in self.batteries:
+            battery.set_temperature(float(self.climate.air_temp_c[i]), self.state.indoor_temp_c)
         return {
             "timestamp": self.index[i],
             "electrical_load_kw": float(self.loads.electrical_kw[i]),
