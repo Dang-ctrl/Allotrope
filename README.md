@@ -71,6 +71,7 @@ run surfaced.
 | Backend API over the live simulation — see [docs/api.md](docs/api.md) | implemented and tested; no trained checkpoint or frontend wired in yet |
 | Scenario benchmark across many seeds — see [docs/evaluation.md](docs/evaluation.md) | implemented for weather/demand variation; asset-failure and sensor-fault scenarios not yet built |
 | Structured logging — see [docs/observability.md](docs/observability.md) | implemented for the API/simulation loop; training/evaluation CLIs and a metrics endpoint not yet wired |
+| Frontend Command Center — see [frontend/README.md](frontend/README.md) | one real screen against live API data; no browser/E2E test tool was available to verify it visually, only build/type-check/component tests and manual curl checks against a live server pair |
 | Federated learning across stations | planned |
 | MQTT / gRPC control plane, Grafana HMI, containers | planned |
 
@@ -170,7 +171,11 @@ allotrope/
   agents/        BranchingDQN, SDDPG, HybridAgent, the replay buffer
   train.py       training CLI: python -m allotrope.train --agent {dqn,sddpg,hybrid}
   evaluate.py    evaluation CLI: python -m allotrope.evaluate --checkpoint ...
+  evaluate_scenarios.py  many-seed statistical evaluation, see docs/evaluation.md
   experiment.py  local, file-based experiment tracking (runs/<run_id>/record.json)
+  observability.py  structured JSON logging, see docs/observability.md
+  api/           FastAPI backend over the live simulation, see docs/api.md
+frontend/        React/TypeScript Command Center UI over the API, see frontend/README.md
 docs/            calibration, reinforcement learning, and other design notes
 scripts/         entry points
 tests/           invariants, including the ones the project's claims rest on
