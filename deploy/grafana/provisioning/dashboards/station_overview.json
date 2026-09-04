@@ -1,0 +1,104 @@
+{
+  "title": "Allotrope Station Overview",
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "refresh": "5s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "station",
+        "type": "query",
+        "datasource": { "type": "postgres", "uid": "TimescaleDB" },
+        "query": "SELECT DISTINCT station_id FROM telemetry ORDER BY 1",
+        "refresh": 2,
+        "current": { "text": "maitri", "value": "maitri" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "title": "Genset output vs electrical load (kW)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "postgres", "uid": "TimescaleDB" },
+      "targets": [
+        {
+          "rawSql": "SELECT time AS \"time\", genset_kw AS \"genset\", electrical_load_kw AS \"load\", renewable_used_kw AS \"renewable\" FROM telemetry WHERE station_id = '$station' AND $__timeFilter(time) ORDER BY time",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "title": "Battery state of charge (mean, fraction)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "postgres", "uid": "TimescaleDB" },
+      "targets": [
+        {
+          "rawSql": "SELECT time AS \"time\", battery_soc_mean AS \"soc\" FROM telemetry WHERE station_id = '$station' AND $__timeFilter(time) ORDER BY time",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "title": "Fuel burn rate (L per sample)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "postgres", "uid": "TimescaleDB" },
+      "targets": [
+        {
+          "rawSql": "SELECT time AS \"time\", fuel_l AS \"fuel\" FROM telemetry WHERE station_id = '$station' AND $__timeFilter(time) ORDER BY time",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "title": "Black carbon emitted (mg per sample)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "postgres", "uid": "TimescaleDB" },
+      "targets": [
+        {
+          "rawSql": "SELECT time AS \"time\", black_carbon_mg AS \"black_carbon\" FROM telemetry WHERE station_id = '$station' AND $__timeFilter(time) ORDER BY time",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "title": "Critical (life-support) load unserved -- should be zero, always",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 16 },
+      "datasource": { "type": "postgres", "uid": "TimescaleDB" },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 0.001 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT COALESCE(SUM(critical_unserved_kw), 0) AS \"critical_unserved_kw\" FROM telemetry WHERE station_id = '$station' AND $__timeFilter(time)",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "title": "Indoor temperature (C)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 16, "x": 8, "y": 16 },
+      "datasource": { "type": "postgres", "uid": "TimescaleDB" },
+      "targets": [
+        {
+          "rawSql": "SELECT time AS \"time\", indoor_temp_c AS \"indoor\", air_temp_c AS \"outdoor\" FROM telemetry WHERE station_id = '$station' AND $__timeFilter(time) ORDER BY time",
+          "format": "time_series"
+        }
+      ]
+    }
+  ]
+}

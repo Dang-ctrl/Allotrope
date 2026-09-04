@@ -11,3 +11,5 @@ data/generated/
 .env
 .DS_Store
 *.pptx
+checkpoints/
+*.pt
