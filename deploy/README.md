@@ -27,7 +27,7 @@ does not depend on this file at all:
 | TimescaleDB bridge SQL and error handling | `tests/test_timescale_bridge.py`, against a fake connection |
 | The full loop: plant to gRPC to MQTT to subscriber | smoke-tested manually in this environment, not in CI |
 | Grafana rendering the dashboard against real data | **not verified here** -- needs a running Postgres and Grafana |
-| The compose file's service wiring itself | **not verified here** -- needs a running Docker daemon |
+| The compose file's service wiring itself | `docker compose config` resolves it cleanly (correct build contexts, volumes, dependency ordering) -- but no container has actually been started, since this environment's Docker CLI has no running daemon behind it |
 
 Everything in the left column is real, tested Python. The compose file wires
 that already-correct code to real infrastructure; running it is the remaining

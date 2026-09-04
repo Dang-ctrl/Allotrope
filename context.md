@@ -183,4 +183,4 @@ work end to end by anything in this session.
 **Update this file at the end of any session that changes the state of the
 project.** Update [docs/PROJECT_BIBLE.md](docs/PROJECT_BIBLE.md) whenever the
 architecture, parameters, results, roadmap or claims change — and re-check its
-section 8 ("not entitled to claim") every time, since that list decays fastest.
+section 12 ("not entitled to claim") every time, since that list decays fastest.
