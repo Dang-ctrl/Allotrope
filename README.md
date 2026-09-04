@@ -38,35 +38,42 @@ Two properties are not negotiable and are built in rather than trained in:
 - **The safety projection layer** bounds every action analytically. The agent
   cannot breach life-support power or heating limits, whatever it has learned.
 - **A deterministic fallback** takes over instantly if the networks time out,
-  raise, or return invalid tensors. At the dispatch level it is implemented and
-  audited today; the inverter-level Volt-VAr / Volt-Watt curves that complete it
-  arrive with the OpenDSS network twin, since they act on voltage.
+  raise, or return invalid tensors — implemented and audited at the dispatch
+  level (`allotrope.safety.fallback`). The inverter-level Volt-VAr / Volt-Watt
+  curves that act on voltage now also exist (`allotrope.network.twin`), run
+  against the OpenDSS network twin; the two are not yet merged into one
+  combined runtime path.
 
-Only model gradients cross the station's 4 MHz satellite link; all inference runs
-on station.
+Only model parameters cross the station's 4 MHz satellite link during
+federated training (`allotrope.agents.federated`); all inference runs on
+station.
 
 ## Status
 
-Phases 1 and 2 of 5 are complete: **the plant**, and **the guarantee**.
+All five phases are code-complete. Phases 1–4 are backed by a full test suite
+run in development; Phase 5's infrastructure (the container stack, Grafana
+against real data) has not been started end to end in that environment — see
+[docs/PROJECT_BIBLE.md §11](docs/PROJECT_BIBLE.md) for exactly which claims
+that covers and which it doesn't.
 
 | Component | State |
 |---|---|
 | Station configuration (Maitri, Bharati) | done |
-| Synthetic polar climate — solar geometry, irradiance, wind, temperature | done |
-| Demand model — electrical, thermal, deferrable | done |
-| Asset models — gensets, dual-chemistry storage, PV, wind | done |
-| Two-bus plant simulator with CHP and boiler coupling | done |
-| Rule-based baselines — legacy N+1 and efficient | done |
-| Safety projection layer and deterministic fallback | done |
-| Gymnasium environment and reward | done |
-| DQN + SDDPG agents | next |
-| Federated learning across stations | planned |
-| MQTT / gRPC control plane, Grafana HMI, containers | planned |
+| Synthetic polar climate, demand model, asset models | done |
+| Two-bus plant simulator, rule-based baselines | done |
+| Safety projection layer, deterministic fallback, Gymnasium env | done |
+| DQN + SDDPG agents, training, checkpointing | done — see results below |
+| OpenDSS network twin, Volt-VAr / Volt-Watt fallback | done |
+| Federated learning across stations (FedAvg) | done — mechanism tested; see caveats |
+| gRPC actuation interface | done |
+| MQTT telemetry link, TimescaleDB bridge | done |
+| Containers, Grafana HMI | code written, **not run end to end** in this environment |
 
 ## Results so far
 
-A synthetic year at Maitri, hourly, seed 0 — reproduce with
-`python scripts/run_baseline.py`:
+A synthetic year, hourly, seed 0 — reproduce with `python scripts/run_baseline.py --station <maitri|bharati>`:
+
+**Maitri**
 
 | | Legacy N+1 | Efficient rules |
 |---|---|---|
@@ -74,16 +81,44 @@ A synthetic year at Maitri, hourly, seed 0 — reproduce with
 | Black carbon | 72 324 g | 11 190 g |
 | Mean genset load factor | **26.5 %** | 52.2 % |
 | Steps wet-stacking | **80.6 %** | 2.3 % |
-| Mean deposit level | **1.00** | 0.00 |
 | Renewable fraction | 15.8 % | 16.1 % |
 | Life-support energy unserved | 0 | 0 |
-| Freeze violations | 0 | 0 |
+
+**Bharati** — also the calibration check, since 264.2 kL against a published
+296 kL seasonal budget is the strongest validation available without station
+telemetry:
+
+| | Legacy N+1 | Efficient rules |
+|---|---|---|
+| Fuel | 264.2 kL | 204.4 kL |
+| Black carbon | 95 251 g | 39 889 g |
 
 The incumbent reproduces the problem the project exists to solve: a fleet
 loitering at a quarter of its rating, wet-stacking four steps in five, deposits
-saturated. Disciplined rules alone recover 15.9 % of the fuel and 84.5 % of the
-black carbon — deliberately leaving headroom, because a baseline that already
-captured everything would leave the learned agent nothing to demonstrate.
+saturated. Disciplined rules alone recover 15.9–22.6 % of the fuel and
+58–84.5 % of the black carbon depending on station — deliberately leaving
+headroom, because a baseline that already captured everything would leave the
+learned agent nothing to demonstrate.
+
+### The learned agent
+
+`HybridAgent` (DQN + SDDPG), evaluated at Maitri on **held-out seeds** the
+policy never trained on — `python scripts/evaluate_agent.py --station maitri
+--checkpoint checkpoints/maitri.pt`:
+
+| | Efficient rules | **Hybrid DQN + SDDPG** |
+|---|---|---|
+| Fuel | 213.4 kL | **209.6 kL** (−1.8 %) |
+| Black carbon | **10 617 g** | 15 931 g |
+| Genset starts/year | 272.2 | **210.0** (−22.9 %) |
+| Life support unserved, every held-out seed | 0 | **0** |
+
+The agent beats the rule-based bar it was built to clear — less fuel and far
+fewer machine starts — while trading a higher black-carbon figure to do it.
+That trade is a property of the reward's stated prices (`RewardWeights`), not
+an unintended shortfall: fuel and starts are priced more heavily than black
+carbon in absolute terms, so the policy is optimising a genuinely different
+point on the trade-off surface, not a worse one by its own objective.
 
 ## The safety guarantee
 
@@ -112,12 +147,15 @@ nothing. The projection also survives NaN and infinity in every field, commands
 of the wrong length, agents that raise, and agents that exceed the 10 ms control
 budget — a late answer being treated as a wrong answer.
 
-Two honest caveats. The freeze column is zero in *both* conditions, because the
-auxiliary boilers protect the heat supply independently of the controller; the
-freeze guarantee is therefore real but currently untested by these attacks.
-And the deterministic fallback here is dispatch logic — the inverter-level
-Volt-VAr and Volt-Watt curves act on voltage, which does not exist in a
-power-balance model, and arrive with the OpenDSS network twin.
+One honest caveat remains: the freeze column is zero in *both* conditions,
+because the auxiliary boilers protect the heat supply independently of the
+controller, so the freeze guarantee is real but still untested by these
+attacks. The other caveat this section used to carry — that Volt-VAr/Volt-Watt
+couldn't exist yet because the plant had no voltage in it — is resolved: an
+OpenDSS network twin now exists (`allotrope/network/twin.py`), with a tested,
+working two-stage Volt-VAr/Volt-Watt fallback. It runs alongside, not yet
+merged into, `DeterministicFallback`'s dispatch-level logic — see
+[docs/PROJECT_BIBLE.md §9](docs/PROJECT_BIBLE.md) for the detail.
 
 One bug found and fixed during this work is worth recording, because it is the
 kind that survives casual review: the projection originally checked each machine
@@ -143,7 +181,31 @@ python scripts/run_safety_audit.py --station maitri --days 30
 ```
 
 ```bash
+python scripts/train_agent.py --station maitri --episodes 500 --out checkpoints/maitri.pt
+python scripts/evaluate_agent.py --station maitri --checkpoint checkpoints/maitri.pt
+```
+
+```bash
 python -m pytest
+```
+
+`torch` installs CPU-only by default (`pip install -e ".[dev]"` above does not
+pull CUDA). The networks are small — 128-unit MLPs over a 25-dimensional
+observation — and gain nothing from a GPU at this problem size.
+
+To regenerate the gRPC stubs after editing `allotrope/rpc/allotrope.proto`:
+
+```bash
+python scripts/gen_proto.py
+```
+
+To try the full stack (plant, gRPC actuation, MQTT, TimescaleDB, Grafana) —
+written and unit-tested as described in
+[docs/PROJECT_BIBLE.md §11](docs/PROJECT_BIBLE.md), but not run end to end as
+a container stack in this repository's own development environment:
+
+```bash
+docker compose -f deploy/docker-compose.yml up --build
 ```
 
 ## Layout
@@ -153,10 +215,15 @@ allotrope/
   config/        station YAML and its typed, validated loader
   synth/         synthetic climate and demand generation
   sim/           asset models, the plant, the episode runner
-  control/       rule-based baselines; learned agents to follow
+  control/       rule-based baselines
   safety/        the projection layer and the deterministic fallback
   envs/          the Gymnasium environment and the reward
-docs/            calibration and design notes
+  agents/        DQN + SDDPG, training, checkpointing, federated averaging
+  network/       the OpenDSS twin and the Volt-VAr / Volt-Watt fallback
+  rpc/           the gRPC actuation interface (proto + server + client)
+  mqtt/          telemetry pub/sub and the TimescaleDB bridge
+deploy/          Dockerfile, docker-compose, Grafana provisioning, DB schema
+docs/            calibration, design notes, and the project bible
 scripts/         entry points
 tests/           invariants, including the ones the project's claims rest on
 ```

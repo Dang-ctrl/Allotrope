@@ -20,7 +20,7 @@ closed.
 
 **Update `docs/PROJECT_BIBLE.md` whenever the architecture, parameters, results,
 roadmap or claims change.** When a result changes, change the number *and*
-re-check the bible's section 8, "What this project is not entitled to claim". That
+re-check the bible's section 12, "What this project is not entitled to claim". That
 list is the part most likely to go quietly stale and the part that matters most.
 
 Update `README.md` when a headline result or the phase table changes. These are
@@ -50,7 +50,7 @@ and Markdown.
   adversarial policies, never merely sensible ones. Three real bugs were found
   that way and none would have been found by random testing alone.
 - **Do not overclaim.** Where the evidence stops, say so — in the README, in
-  commit messages, and to the user. The bible's section 8 is the canonical list.
+  commit messages, and to the user. The bible’s section 12 is the canonical list.
 - **No personal data in the repo.** It is public. The SIH deck's team slide
   carries registration numbers, personal emails and mobile numbers; the `.pptx`
   is gitignored and those details stay out of all documentation.

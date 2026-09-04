@@ -8,7 +8,7 @@ For the current working state (environment, next steps, open questions) see
 [../context.md](../context.md). For where every number came from see
 [calibration.md](calibration.md).
 
-**Last updated:** 2026-08-31, end of Phase 2.
+**Last updated:** 2026-09-05, end of Phase 5.
 
 ---
 
@@ -90,9 +90,14 @@ on station.
 |---|---|---|
 | 1 | The plant — config, synthetic climate, demand, assets, simulator, baselines | **done** |
 | 2 | The guarantee — safety projection, fallback, Gymnasium env, reward | **done** |
-| 3 | The agents — SDDPG, then DQN, then evaluation | next |
-| 4 | The twin — PyPSA + OpenDSS network, Volt-VAr / Volt-Watt, C-HIL path | planned |
-| 5 | The system — MQTT / gRPC control plane, Grafana HMI, containers, federated learning | planned |
+| 3 | The agents — DQN + SDDPG, training, checkpointing, federated averaging | **done** |
+| 4 | The twin — OpenDSS network, Volt-VAr / Volt-Watt fallback | **done** |
+| 5 | The system — gRPC actuation, MQTT telemetry, TimescaleDB, Grafana, containers | **code-complete; infra untested here — see §10** |
+
+Phases 3–5 were built in one autonomous session (2026-09-05) at the user's
+request, without further confirmation between steps. Section 10 states plainly
+which parts of that work are backed by tests run in this environment and which
+are infrastructure code that has not been exercised end to end.
 
 ## 4. Design decisions, and why
 
@@ -289,9 +294,11 @@ nothing.
 The first random-policy run leaked 3.9 MWh. These were found only because the
 audit runs adversarial policies rather than sensible ones.
 
-## 7. Results
+## 7. Results — rule-based baselines
 
-Synthetic year at Maitri, hourly, seed 0 — `scripts/run_baseline.py`:
+Synthetic year, hourly, seed 0 — `scripts/run_baseline.py`:
+
+**Maitri**
 
 | | Legacy N+1 | Efficient rules |
 |---|---|---|
@@ -308,10 +315,30 @@ Synthetic year at Maitri, hourly, seed 0 — `scripts/run_baseline.py`:
 | Life support unserved | 0 | 0 |
 | Freeze violations | 0 | 0 |
 
-Rules alone: **15.9 % fuel, 84.5 % black carbon.** Headroom is left deliberately —
-a baseline capturing everything would leave the learned agent nothing to show.
+Rules alone: **15.9 % fuel, 84.5 % black carbon.**
 
-### Climate validation
+**Bharati** (seed 0) — also the calibration check against the published fuel
+figure:
+
+| | Legacy N+1 | Efficient rules |
+|---|---|---|
+| Fuel | 264.2 kL | 204.4 kL |
+| Black carbon | 95 251 g | 39 889 g |
+| Mean genset load factor | 0.180 | 0.374 |
+| Wet-stacking fraction | 0.939 | 0.262 |
+| Genset starts | 182 | 142 |
+
+Rules alone: **22.6 % fuel, 58.1 % black carbon.** Legacy's 264.2 kL sits close
+to the published 296 kL seasonal budget — an independent consistency check, not
+a fit (see [calibration.md](calibration.md)).
+
+Headroom is left deliberately in both stations' rule-based numbers — a baseline
+capturing everything would leave the learned agent nothing to show. Bharati's
+larger absolute genset starts and lower load factor than Maitri's reflect its
+larger fleet (3×200 kW vs 3×125 kW) relative to its demand, not a difference in
+the control logic.
+
+### Climate validation (Maitri)
 
 | Feature | Model | Independently known |
 |---|---|---|
@@ -323,28 +350,225 @@ a baseline capturing everything would leave the learned agent nothing to show.
 | POA gain over horizontal | 1.33× | Consequence of 0.8 albedo at 70° tilt |
 | Mean air density | 1.36 kg/m³ | 11 % above nameplate 1.225 |
 
-## 8. What this project is *not* entitled to claim
+## 8. Results — the learned agent
 
-Stated explicitly so no one quotes past the evidence:
+`HybridAgent`: Double DQN over the 8 enumerated commitment patterns (2³ for
+three gensets), DDPG over the continuous dispatch (per-set loading fraction,
+per-pack battery power, melt rate). Trained entirely behind the safety
+projection layer — `PolarMicrogridEnv(apply_safety=True)`, the default — so
+exploration is safe from the first random action and the policy never had to
+unlearn a habit it was never permitted to form.
+
+**Maitri**, `checkpoints/maitri.pt`, 500 training episodes (30-day episodes,
+random start dates), evaluated on **held-out seeds 100–104** (disjoint from
+every training seed), full year (8760 steps) each —
+`scripts/evaluate_agent.py`:
+
+| | Legacy N+1 | Efficient rules | **Hybrid DQN+SDDPG** |
+|---|---|---|---|
+| Fuel | 253.8 kL | 213.4 kL | **209.6 kL** |
+| Black carbon | 72 141 g | **10 617 g** | 15 931 g |
+| Mean load factor | 0.264 | **0.524** | 0.514 |
+| Wet-stacking fraction | 0.813 | **0.018** | 0.051 |
+| Renewable fraction | 0.160 | 0.162 | 0.162 |
+| Genset starts/year | 23.8 | 272.2 | **210.0** |
+| Life support unserved | 0 | 0 | **0** |
+| Freeze violations | 0 | 0 | **0** |
+
+**The agent clears the bar it has to clear**: 1.8 % less fuel than
+`EfficientRuleBased`, on seeds it never saw during training. It also cuts
+genset starts by 22.9 % against that same baseline — the reward's
+`genset_start_per_event` price doing exactly the job it was added for after
+Phase 1 found the rule-based controller alone made 307 starts/year.
+
+**It does not win on every metric.** Black carbon is higher than the
+rule-based baseline's. This is not a bug: `RewardWeights` prices fuel and
+starts more heavily in absolute terms than black carbon, so the learned policy
+is correctly optimising a different point on the trade-off surface than the
+hand-tuned rules chose, not a worse point by its own objective. State it this
+way if asked, rather than as an unqualified win.
+
+### How this result was nearly wrong
+
+The first training run (300 episodes) is not the one reported above and was
+discarded. `DQNConfig`/`SDDPGConfig`'s default exploration-decay rates are
+tuned for roughly 1000 episodes; at 300 episodes the run finished with the DQN
+still choosing randomly 40 % of the time and the SDDPG noise barely decayed
+from its start value. Every number that run produced — fuel, load factor,
+genset starts — was measuring exploration noise, not the learned policy.
+`scripts/train_agent.py` now derives the decay schedule from the actual
+episode count requested, reaching the exploration floor at 70 % of the run so
+the saved checkpoint gets a real stretch of near-greedy training before it is
+evaluated. A second, unrelated bug in `evaluate_agent.py` itself — a
+transposed pandas DataFrame — was caught only because it crashed outright;
+see §11 for what that implies about test coverage of the reporting scripts.
+
+**Bharati and federated training**: see [../context.md](../context.md) for
+whether these landed in this session or remain open.
+
+## 9. The network twin and Volt-VAr/Volt-Watt
+
+`allotrope/network/twin.py`: a minimal radial LV feeder in OpenDSS, one bus per
+asset group (PV, wind, each storage pack, three load classes) off the genset
+bus. Topology and cable impedances are `[assumed]` — there is no public wiring
+diagram for either station — tagged as such in each station's new `network:`
+YAML section. Real power at each bus is injected as a signed `Load` (negative
+kW for generation) rather than a `Generator` element, which is standard
+practice for a net-load snapshot study and avoids PV-mode convergence quirks on
+a weakly meshed radial network.
+
+The fallback implements IEEE 1547-2018's default Category III curves in two
+stages: reactive support first (free — no real energy cost), then real-power
+curtailment only if VAr support alone cannot hold a bus in range. Verified
+under a deliberately extreme case — 600 kW of PV export against a 50 kWp
+rating:
+
+| Stage | PV bus voltage |
+|---|---|
+| Uncorrected | 1.113 pu |
+| After VAr support alone | above 1.10 pu still |
+| After Volt-Watt curtailment | ≤ 1.10 pu (the ceiling) |
+
+That the second stage is needed, and that it actually brings the bus back into
+range, is what `tests/test_network.py` checks — not merely that the curves
+exist and have the right shape (also checked, separately).
+
+This closes the gap Phase 2 flagged: the deck's "deterministic Volt-VAr /
+Volt-Watt fallback" is now real code with passing tests, not merely a claim
+deferred to a future phase. It is dispatch-adjacent, not the same code path as
+`allotrope.safety.fallback.DeterministicFallback` — the two fallbacks act at
+different layers (station dispatch vs. inverter-level voltage response) and
+are not yet wired together into one combined control loop. See §11.
+
+## 10. The system: gRPC, MQTT, TimescaleDB, Grafana, containers
+
+**The actuation interface** (`allotrope/rpc/`): a gRPC service defined in
+`allotrope.proto`, carrying `DispatchRequest`/`Telemetry` between a controller
+and a plant. This is the hard interface the C-HIL claim depends on — the
+server applies the safety projection to every command exactly as
+`GuardedController` does in-process, so a remote controller gets no less
+protection than a local one, and swapping the simulated plant for a Typhoon HIL
+rig behind the same interface is a deployment change, not a rewrite. Verified
+by sending an all-off command and a command full of NaN/infinity over the wire
+and confirming life support still reads zero unserved on the other side.
+
+**The telemetry link** (`allotrope/mqtt/`): MQTT carries telemetry and
+federated model updates only — never control commands, which stay on the gRPC
+path with its latency budget. Tested against a real embedded MQTT broker
+(`amqtt`, pure Python, spun up on a throwaway port for the test session), not
+a mock of the protocol, including a payload deliberately corrupted to confirm
+the subscriber drops it rather than crashing.
+
+**The TimescaleDB bridge** (`allotrope/mqtt/timescale_bridge.py`): turns each
+telemetry message into a row. Tested against a fake connection object, since
+no live TimescaleDB exists in this environment — what is actually verified is
+that the bridge builds the right SQL for a given telemetry dict and survives a
+broken connection without taking the subscriber down.
+
+**Federated learning across stations** (`allotrope/agents/federated.py`):
+FedAvg — each site trains locally for a round, then only the resulting network
+*parameters* are averaged into the next round's global model, never the
+weather, demand, or telemetry that produced them. This is what makes the
+deck's "only gradients cross the satellite link" claim concrete: a round's
+parameter delta is bandwidth-equivalent to the accumulated gradient it
+represents, and no raw station data ever leaves a site. Averaging is only
+meaningful because Maitri and Bharati, despite differing roughly 2× in
+installed capacity, share the same asset counts — three gensets, two storage
+packs — and `HybridAgent`'s observation is scaled by each station's own
+capacity, so the same network architecture and the same action space serve
+both.
+
+**Containers and Grafana** (`deploy/`): a `Dockerfile`, `docker-compose.yml`
+wiring mosquitto + TimescaleDB + Grafana + a bridge + one container per
+station, a TimescaleDB schema turning `telemetry` into a hypertable, and a
+provisioned Grafana dashboard (genset output vs. load, battery SoC, fuel burn
+rate, black carbon, indoor temperature, and a stat panel for critical-unserved
+that should read zero always). See §11 for what is and is not proven to work.
+
+## 11. What was tested here, and what is infrastructure code
+
+Read this section before repeating any claim about Phases 3–5 to someone who
+will check.
+
+**Genuinely tested in this environment** (194 tests, all passing at last
+count — see [../context.md](../context.md) for the current number):
+
+- Every agent mechanism: replay buffer, DQN/SDDPG action validity and gradient
+  flow, checkpoint round-trips, the hybrid agent satisfying the same
+  `Controller` protocol as the rule-based baselines.
+- **The safety guarantee under an untrained agent** — near-random network
+  weights, wrapped in `GuardedController`, still cannot endanger the station.
+  This is a real test of the projection layer, not one that passes because the
+  agent happens to already be sensible.
+- Federated averaging's arithmetic (elementwise weighted mean, exactly) and an
+  end-to-end federated round across both stations, checked for safety at each
+  participating station afterward.
+- The OpenDSS twin's power flow and the two-stage Volt-VAr/Volt-Watt fallback,
+  including that curtailment is actually needed and actually works under an
+  extreme case.
+- The gRPC actuation path end to end, client and server, including safety
+  enforcement over the wire and malformed-payload handling.
+- The MQTT telemetry path end to end against a real (embedded) broker,
+  including malformed-payload handling.
+- The trained agent's held-out evaluation numbers in §8.
+
+**Infrastructure code, not exercised end to end here:**
+
+- `deploy/docker-compose.yml` — this environment has the Docker CLI but no
+  running daemon. The stack has not been started.
+- Grafana actually rendering the provisioned dashboard against real data — no
+  Postgres/TimescaleDB was running here to render it against.
+- The TimescaleDB bridge's SQL against an actual TimescaleDB — tested against
+  a fake connection only (see §10).
+- The Volt-VAr/Volt-Watt fallback and `DeterministicFallback` are not wired
+  into one combined runtime path; they exist as separate, separately-tested
+  mechanisms at different control layers.
+
+None of the above is claimed as working in production. It is claimed as
+correct, tested Python wired to real infrastructure definitions that have not
+yet been started — a smaller, more honest claim, and the true one.
+
+## 12. What this project is *not* entitled to claim
+
+Stated explicitly so no one quotes past the evidence. Updated at the end of
+Phase 5 — items from Phase 2 that Phases 3–5 resolved are marked as such
+rather than silently dropped.
 
 - **Not a predicted black-carbon concentration.** The model emits mass and does
   not model dispersion. Ratios between strategies only.
-- **Not a validated freeze guarantee.** The audit shows zero freeze violations in
-  *both* conditions, because boilers protect heat independently of the
-  controller. The guarantee is real; the audit does not yet demonstrate it.
-- **Not Volt-VAr / Volt-Watt today.** Those curves act on voltage, which a
-  power-balance model does not have. They arrive with the OpenDSS twin. The
-  implemented fallback is dispatch logic.
-- **Not validated against station data.** There is none public. Calibration is a
-  consistency argument against one published fuel figure and published climate.
-- **Not a C-HIL result.** Software-in-the-loop only, so far.
+- **Not a validated freeze guarantee.** Unchanged since Phase 2: the audit
+  shows zero freeze violations in *both* guarded and unguarded conditions,
+  because boilers protect heat independently of the controller. The guarantee
+  is real; no attack scenario built so far actually exercises it.
+- ~~Not Volt-VAr / Volt-Watt today~~ — **resolved in Phase 4.** The fallback
+  exists, is tested, and is verified to actually curtail power when reactive
+  support alone is insufficient. It is not yet wired to the station-level
+  `DeterministicFallback` into one runtime path (see §11).
+- **Not validated against station data.** There is none public. Calibration is
+  a consistency argument against published fuel and climate figures for both
+  stations now, not just Maitri.
+- **Not a C-HIL result.** Software-in-the-loop only, so far. The gRPC
+  interface built in Phase 5 is what a HIL rig would sit behind, but no rig
+  has been connected.
+- **Not a deployed federated-learning result.** The mechanism is real and
+  tested (§10, §11); no long training run across real station conditions
+  (rather than the short runs used to test the mechanism) has produced a
+  reportable federated policy as of this writing — check
+  [../context.md](../context.md) for whether that changed later in this
+  session.
+- **Not an end-to-end infrastructure deployment.** See §11's table. Every
+  piece is real, tested Python; the containerised stack running together has
+  not been started in this environment.
+- **The Bharati agent may not exist yet at time of reading.** Only Maitri's
+  held-out result is reported in §8 as of this document's last update; check
+  `checkpoints/` and the commit log before assuming otherwise.
 
-## 9. Maintenance
+## 13. Maintenance
 
 Update this document whenever the architecture, parameters, results, roadmap or
 claims change. Update [../context.md](../context.md) at the end of any session
 that changes the state of the project.
 
-When a result changes, change the number **and** re-check section 8 — the list of
-things not claimed is the part most likely to go quietly stale, and it is the
-part that matters most.
+When a result changes, change the number **and** re-check section 12 — the list
+of things not claimed is the part most likely to go quietly stale, and it is
+the part that matters most.

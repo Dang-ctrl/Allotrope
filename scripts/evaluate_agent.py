@@ -57,7 +57,7 @@ def main() -> None:
     for label, results in all_results.items():
         keys = results[0].summary.keys()
         means[label] = {k: sum(r.summary[k] for r in results) / len(results) for k in keys}
-    summary_df = pd.DataFrame(means)[
+    summary_df = pd.DataFrame(means).T[
         [
             "fuel_kl",
             "black_carbon_g",
