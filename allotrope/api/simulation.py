@@ -16,6 +16,8 @@ rather than letting a client infer otherwise.
 
 from __future__ import annotations
 
+import logging
+import time
 from collections import deque
 from dataclasses import dataclass, field
 from threading import Lock
@@ -23,9 +25,12 @@ from typing import Any, Protocol
 
 from allotrope.config import StationConfig, load_station
 from allotrope.control.baseline import EfficientRuleBased
+from allotrope.observability import configure_logging, log_event
 from allotrope.safety.fallback import GuardedController
 from allotrope.sim.plant import DispatchCommand, PolarMicrogrid
 from allotrope.sim.runner import build_plant
+
+_logger = configure_logging()
 
 HISTORY_LEN = 500
 """How many past steps' telemetry the API keeps in memory for charting."""
@@ -77,15 +82,50 @@ class StationSimulation:
         with self.lock:
             if self.plant.done:
                 self.running = False
+                log_event(_logger, "simulation.done", station=self.station_id, step=self.step_count)
                 return None
+            start = time.perf_counter()
             observation = self.plant.observe()
             command = self.controller.act(observation, self.plant)
             telemetry = self.plant.step(command)
+            latency_ms = (time.perf_counter() - start) * 1000.0
             record = _flatten(telemetry)
-            record["safety"] = getattr(self.controller, "last_report", None)
-            record["fallback_reason"] = getattr(self.controller, "last_fallback_reason", None)
+            report = getattr(self.controller, "last_report", None)
+            fallback_reason = getattr(self.controller, "last_fallback_reason", None)
+            record["safety"] = report
+            record["fallback_reason"] = fallback_reason
             self.history.append(record)
             self.step_count += 1
+
+            if fallback_reason is not None:
+                log_event(
+                    _logger,
+                    "controller.fallback",
+                    level=logging.WARNING,
+                    station=self.station_id,
+                    step=self.step_count,
+                    reason=fallback_reason.value,
+                )
+            if report is not None and report.intervened:
+                log_event(
+                    _logger,
+                    "safety.intervened",
+                    station=self.station_id,
+                    step=self.step_count,
+                    interventions=[i.value for i in report.interventions],
+                )
+            if latency_ms > 10.0:
+                # Observability only: this is the API's own wall-clock measurement
+                # of observe+act+step, not the enforced budget GuardedController
+                # itself checks against the agent's act() call in fallback.py.
+                log_event(
+                    _logger,
+                    "simulation.step_latency_high",
+                    level=logging.WARNING,
+                    station=self.station_id,
+                    step=self.step_count,
+                    latency_ms=round(latency_ms, 3),
+                )
             return record
 
     def reset(self) -> None:

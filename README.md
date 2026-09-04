@@ -65,6 +65,7 @@ training is in progress, not yet claimed.
 | Local experiment tracking (`allotrope/experiment.py`, `runs/`) | done |
 | Backend API over the live simulation — see [docs/api.md](docs/api.md) | implemented and tested; no trained checkpoint or frontend wired in yet |
 | Scenario benchmark across many seeds — see [docs/evaluation.md](docs/evaluation.md) | implemented for weather/demand variation; asset-failure and sensor-fault scenarios not yet built |
+| Structured logging — see [docs/observability.md](docs/observability.md) | implemented for the API/simulation loop; training/evaluation CLIs and a metrics endpoint not yet wired |
 | Federated learning across stations | planned |
 | MQTT / gRPC control plane, Grafana HMI, containers | planned |
 

@@ -26,6 +26,7 @@ what is deliberately not here yet and why):
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
@@ -106,6 +107,15 @@ def create_app() -> FastAPI:
     )
     manager = SimulationManager()
     app.state.manager = manager
+    app.state.started_at = time.monotonic()
+
+    @app.get("/health")
+    def health() -> dict[str, Any]:
+        return {
+            "status": "ok",
+            "uptime_s": round(time.monotonic() - app.state.started_at, 3),
+            "stations": list(manager.stations.keys()),
+        }
 
     @app.get("/stations")
     def list_stations() -> list[dict[str, Any]]:

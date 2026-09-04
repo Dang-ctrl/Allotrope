@@ -19,6 +19,16 @@ def _client() -> TestClient:
     return TestClient(create_app())
 
 
+def test_health_reports_real_uptime_and_stations():
+    client = _client()
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["uptime_s"] >= 0.0
+    assert set(body["stations"]) == set(available_stations())
+
+
 def test_lists_every_configured_station():
     client = _client()
     resp = client.get("/stations")
