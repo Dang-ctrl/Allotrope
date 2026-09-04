@@ -39,8 +39,11 @@ Two properties are not negotiable and are built in rather than trained in:
   cannot breach life-support power or heating limits, whatever it has learned.
 - **A deterministic fallback** takes over instantly if the networks time out,
   raise, or return invalid tensors. At the dispatch level it is implemented and
-  audited today; the inverter-level Volt-VAr / Volt-Watt curves that complete it
-  arrive with the OpenDSS network twin, since they act on voltage.
+  audited today. Inverter-level Volt-**Watt** curtailment now runs on top of
+  it for a station with a network model (Maitri), against a real single-feeder
+  OpenDSS twin — see [docs/network-safety.md](docs/network-safety.md). Volt-VAr
+  does not exist: it needs a reactive-power balance this project's plant
+  doesn't model, and that document says so rather than implying otherwise.
 
 Only model gradients cross the station's 4 MHz satellite link; all inference runs
 on station.
@@ -72,6 +75,7 @@ run surfaced.
 | Scenario benchmark across many seeds — see [docs/evaluation.md](docs/evaluation.md) | implemented for weather/demand variation; asset-failure and sensor-fault scenarios not yet built |
 | Structured logging — see [docs/observability.md](docs/observability.md) | implemented for the API/simulation loop; training/evaluation CLIs and a metrics endpoint not yet wired |
 | Frontend Command Center — see [frontend/README.md](frontend/README.md) | one real screen against live API data; no browser/E2E test tool was available to verify it visually, only build/type-check/component tests and manual curl checks against a live server pair |
+| OpenDSS network twin + inverter-level Volt-Watt — see [docs/network-safety.md](docs/network-safety.md) | implemented and tested for Maitri (single-feeder, real OpenDSS power flow); Bharati has no network config yet; Volt-VAr not implemented (needs reactive-power modelling the plant doesn't have) |
 | Federated learning across stations | planned |
 | MQTT / gRPC control plane, Grafana HMI, containers | planned |
 
@@ -127,9 +131,11 @@ budget — a late answer being treated as a wrong answer.
 Two honest caveats. The freeze column is zero in *both* conditions, because the
 auxiliary boilers protect the heat supply independently of the controller; the
 freeze guarantee is therefore real but currently untested by these attacks.
-And the deterministic fallback here is dispatch logic — the inverter-level
-Volt-VAr and Volt-Watt curves act on voltage, which does not exist in a
-power-balance model, and arrive with the OpenDSS network twin.
+And the deterministic fallback here is dispatch logic — voltage doesn't
+exist in this power-balance model, which is why it took a separate network
+twin and inverter layer (Maitri only so far) to add Volt-Watt curtailment;
+see [docs/network-safety.md](docs/network-safety.md) for what that covers
+and what it still doesn't (Volt-VAr).
 
 One bug found and fixed during this work is worth recording, because it is the
 kind that survives casual review: the projection originally checked each machine
@@ -164,9 +170,10 @@ python -m pytest
 allotrope/
   config/        station YAML and its typed, validated loader
   synth/         synthetic climate and demand generation
-  sim/           asset models, the plant, the episode runner
+  sim/           asset models, the plant, the episode runner, the OpenDSS network twin
   control/       rule-based baselines
-  safety/        the projection layer, the deterministic fallback, GuardedController
+  safety/        the projection layer, the deterministic fallback, GuardedController,
+                 inverter-level Volt-Watt (see docs/network-safety.md)
   envs/          the Gymnasium environment and the reward
   agents/        BranchingDQN, SDDPG, HybridAgent, the replay buffer
   train.py       training CLI: python -m allotrope.train --agent {dqn,sddpg,hybrid}

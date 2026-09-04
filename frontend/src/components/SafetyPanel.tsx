@@ -74,6 +74,32 @@ export function SafetyPanel({ safety }: { safety: SafetyStatus }) {
           Deterministic fallback active: {safety.last_fallback_reason}
         </div>
       )}
+
+      {safety.voltage && (
+        <div className="mt-3 border-t border-base-600 pt-3">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-[11px] uppercase tracking-wide text-ink-400">
+              Inverter Volt-Watt (network twin)
+            </span>
+            <StatusPill tone={safety.voltage.curtailed ? "warn" : "ok"}>
+              {safety.voltage.curtailed ? "curtailing renewables" : "no curtailment"}
+            </StatusPill>
+          </div>
+          <div className="flex flex-wrap gap-4 text-xs text-ink-400">
+            {Object.entries(safety.voltage.bus_voltage_pu).map(([bus, pu]) => (
+              <span key={bus}>
+                {bus} <span className="num text-ink-200">{pu.toFixed(3)} pu</span>
+              </span>
+            ))}
+          </div>
+          {safety.voltage.curtailed && safety.voltage.renewable_limit_kw !== null && (
+            <div className="mt-1 text-xs text-warn">
+              Renewables limited to {safety.voltage.renewable_limit_kw.toFixed(1)} kW of{" "}
+              {safety.voltage.renewable_available_kw.toFixed(1)} kW available
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

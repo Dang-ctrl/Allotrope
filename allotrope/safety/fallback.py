@@ -29,6 +29,7 @@ import numpy as np
 
 from allotrope.config import StationConfig
 from allotrope.safety.projection import SafetyProjection, SafetyReport
+from allotrope.safety.voltage import InverterVoltageLayer, VoltageReport
 from allotrope.sim.plant import DispatchCommand, PolarMicrogrid
 
 
@@ -143,11 +144,18 @@ class GuardedController:
     agent: Any | None = None
     latency_budget_ms: float = 10.0
     """A late answer is a wrong answer: the gRPC control path budgets 10 ms."""
+    inverter_layer: InverterVoltageLayer | None = None
+    """Inverter-level Volt-Watt curtailment (allotrope.safety.voltage), for a
+    station with a network model. None (the default) reproduces this class's
+    behaviour from before this layer existed exactly -- every existing
+    caller that doesn't pass one is unaffected. Build one with
+    `allotrope.safety.voltage.build_inverter_layer(cfg)`."""
 
     name: str = "guarded"
     stats: GuardStats = field(default_factory=GuardStats)
     last_report: SafetyReport | None = None
     last_fallback_reason: FallbackReason | None = None
+    last_voltage_report: VoltageReport | None = None
 
     def __post_init__(self) -> None:
         self.fallback = DeterministicFallback(self.cfg)
@@ -159,6 +167,7 @@ class GuardedController:
         self.stats = GuardStats()
         self.last_report = None
         self.last_fallback_reason = None
+        self.last_voltage_report = None
         for target in (self.agent, self.fallback):
             if target is not None and hasattr(target, "reset"):
                 target.reset()
@@ -176,6 +185,11 @@ class GuardedController:
         self.last_report = report
         if report.intervened:
             self.stats.projections += 1
+
+        if self.inverter_layer is not None:
+            safe, voltage_report = self.inverter_layer.apply(safe, observation)
+            self.last_voltage_report = voltage_report
+
         return safe
 
     def _propose(

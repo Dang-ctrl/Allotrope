@@ -147,3 +147,27 @@ criticality:
   life_support_kw: 45.0              # [assumed] equals `loads.electrical.fixed_kw`
   min_indoor_temp_c: 16.0            # [assumed] hard floor, below setpoint
   reserve_margin_kw: 20.0            # [assumed] spinning reserve above net demand
+
+# A single-feeder radial LV network, for the inverter-level Volt-Watt safety
+# layer (allotrope.safety.voltage). Entirely [assumed] -- a plausible small
+# station layout, not a measured one -- and optional: allotrope.config
+# treats a station with no `network:` section as having no network model at
+# all (StationConfig.network is None), which is Bharati's current state.
+# Cable lengths/gauges here are notional; what matters for the voltage
+# behaviour this layer reacts to is the resulting per-line R/X, not how
+# those numbers were arrived at.
+network:
+  base_kv: 0.4                       # [assumed] three-phase LV feeder, typical for a station microgrid
+  source_bus: plant                  # gensets and storage connect here; held at the network's 1.0 pu reference
+  buses:
+    - id: plant
+    - id: renewables                 # PV + wind inverters
+    - id: load                       # electrical load
+  lines:
+    # A generation-side run with more headroom for reactive support than
+    # resistance, since inverter overvoltage is the failure mode this layer
+    # exists to catch.
+    - {from: plant, to: renewables, r_ohm: 0.05, x_ohm: 0.02}   # [assumed] ~150 m LV cable
+    - {from: plant, to: load, r_ohm: 0.08, x_ohm: 0.03}         # [assumed] ~250 m LV cable
+  v_min_pu: 0.94                     # [assumed] ANSI C84.1-style service-voltage floor
+  v_max_pu: 1.06                     # [assumed] matches the IEEE 1547-2018 Volt-Watt curve's V2

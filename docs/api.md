@@ -35,7 +35,7 @@ Swapping in a trained checkpoint is a change to
 | `GET /stations/{id}/state` | `plant.observe()` on the current step, `mode: "simulation"` |
 | `GET /stations/{id}/telemetry` | the last `HISTORY_LEN` (500) steps of real `plant.step()` telemetry |
 | `GET /stations/{id}/metrics` | `plant.summary()` -- cumulative fuel, black carbon, starts, etc. |
-| `GET /stations/{id}/safety` | `GuardedController.stats` and `.last_report` -- real intervention counts, not a mock |
+| `GET /stations/{id}/safety` | `GuardedController.stats` and `.last_report` -- real intervention counts, not a mock. Also carries a `voltage` field from the inverter-level Volt-Watt layer (see [docs/network-safety.md](network-safety.md)) for a station with a network model; `null` for one without (Bharati, currently). |
 | `GET /stations/{id}/controller` | which controller class is wired in |
 | `POST /stations/{id}/simulation/start` | starts a background asyncio loop stepping the plant every `interval_s` |
 | `POST /stations/{id}/simulation/stop` | stops it, holding the current state |

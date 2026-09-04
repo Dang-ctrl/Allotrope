@@ -80,6 +80,14 @@ export interface SafetyReport {
   detail: Record<string, number>;
 }
 
+export interface VoltageStatus {
+  bus_voltage_pu: Record<string, number>;
+  converged: boolean;
+  curtailed: boolean;
+  renewable_available_kw: number;
+  renewable_limit_kw: number | null;
+}
+
 export interface SafetyStatus {
   last_report: SafetyReport | null;
   last_fallback_reason: string | null;
@@ -90,6 +98,8 @@ export interface SafetyStatus {
   projection_rate: number;
   fallback_reasons: Record<string, number>;
   max_latency_ms: number;
+  /** null for a station with no network model -- see docs/network-safety.md. */
+  voltage: VoltageStatus | null;
 }
 
 export interface Metrics {

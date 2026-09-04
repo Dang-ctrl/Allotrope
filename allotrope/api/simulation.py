@@ -27,6 +27,7 @@ from allotrope.config import StationConfig, load_station
 from allotrope.control.baseline import EfficientRuleBased
 from allotrope.observability import configure_logging, log_event
 from allotrope.safety.fallback import GuardedController
+from allotrope.safety.voltage import build_inverter_layer
 from allotrope.sim.plant import DispatchCommand, PolarMicrogrid
 from allotrope.sim.runner import build_plant
 
@@ -172,6 +173,7 @@ class StationSimulation:
         stats = getattr(guard, "stats", None)
         last_report = getattr(guard, "last_report", None)
         last_fallback = getattr(guard, "last_fallback_reason", None)
+        last_voltage = getattr(guard, "last_voltage_report", None)
         return {
             "last_report": last_report.as_dict() if last_report is not None else None,
             "last_fallback_reason": last_fallback.value if last_fallback is not None else None,
@@ -182,6 +184,9 @@ class StationSimulation:
             "projection_rate": getattr(stats, "projection_rate", 0.0),
             "fallback_reasons": dict(getattr(stats, "reasons", {})),
             "max_latency_ms": getattr(stats, "max_latency_ms", 0.0),
+            # None for a station with no network config (allotrope.safety.voltage) --
+            # see docs/network-safety.md for which stations that is and why.
+            "voltage": last_voltage.as_dict() if last_voltage is not None else None,
         }
 
     def controller_status(self) -> dict[str, Any]:
@@ -229,8 +234,16 @@ def default_controller(cfg: StationConfig) -> GuardedController:
     every other controller in this project is judged through. A trained
     checkpoint can be swapped in later without changing this module's
     interface.
+
+    Also wires in inverter-level Volt-Watt curtailment
+    (`allotrope.safety.voltage.build_inverter_layer`) for a station whose
+    config declares a network model -- `None` for one that doesn't, which
+    `GuardedController` treats identically to how it behaved before this
+    layer existed.
     """
-    return GuardedController(cfg, agent=EfficientRuleBased(cfg))
+    return GuardedController(
+        cfg, agent=EfficientRuleBased(cfg), inverter_layer=build_inverter_layer(cfg)
+    )
 
 
 def build_simulation(station_id: str, seed: int = 0) -> StationSimulation:

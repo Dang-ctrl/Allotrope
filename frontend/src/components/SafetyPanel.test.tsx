@@ -40,4 +40,33 @@ describe("SafetyPanel", () => {
     expect(screen.getByText("42")).toBeInTheDocument();
     expect(screen.getByText("3.14 ms")).toBeInTheDocument();
   });
+
+  it("shows per-bus voltages and hides curtailment when there is none", () => {
+    render(<SafetyPanel safety={maitriSafety} />);
+    expect(screen.getByText("no curtailment")).toBeInTheDocument();
+    expect(screen.getByText("1.001 pu")).toBeInTheDocument();
+  });
+
+  it("surfaces curtailment and the kW limit when the inverter layer acted", () => {
+    render(
+      <SafetyPanel
+        safety={{
+          ...maitriSafety,
+          voltage: {
+            ...maitriSafety.voltage!,
+            curtailed: true,
+            renewable_available_kw: 300,
+            renewable_limit_kw: 120,
+          },
+        }}
+      />,
+    );
+    expect(screen.getByText("curtailing renewables")).toBeInTheDocument();
+    expect(screen.getByText(/Renewables limited to 120.0 kW of 300.0 kW available/)).toBeInTheDocument();
+  });
+
+  it("omits the network panel entirely for a station with no network model", () => {
+    render(<SafetyPanel safety={{ ...maitriSafety, voltage: null }} />);
+    expect(screen.queryByText(/Inverter Volt-Watt/)).not.toBeInTheDocument();
+  });
 });

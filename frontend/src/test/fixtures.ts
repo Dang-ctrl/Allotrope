@@ -90,6 +90,13 @@ export const maitriSafety: SafetyStatus = {
   projection_rate: 0,
   fallback_reasons: {},
   max_latency_ms: 0.092,
+  voltage: {
+    bus_voltage_pu: { plant: 1.0, renewables: 1.001, load: 0.942 },
+    converged: true,
+    curtailed: false,
+    renewable_available_kw: 6.15,
+    renewable_limit_kw: null,
+  },
 };
 
 export const maitriMetrics: Metrics = {
