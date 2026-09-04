@@ -23,7 +23,7 @@ from allotrope.agents.checkpoint import load
 from allotrope.config import load_station
 from allotrope.control.baseline import EfficientRuleBased, LegacyNPlusOne
 from allotrope.safety.fallback import GuardedController
-from allotrope.sim.runner import build_plant, compare, run_episode
+from allotrope.sim.runner import build_plant, compare_multi, run_episode
 
 HELD_OUT_SEEDS = [100, 101, 102, 103, 104]
 
@@ -53,22 +53,16 @@ def main() -> None:
     print(f"\n{cfg.site.name}  |  {args.periods} steps  |  held-out seeds {args.seeds}")
     print("=" * 90)
 
-    means = {}
-    for label, results in all_results.items():
-        keys = results[0].summary.keys()
-        means[label] = {k: sum(r.summary[k] for r in results) / len(results) for k in keys}
-    summary_df = pd.DataFrame(means).T[
-        [
-            "fuel_kl",
-            "black_carbon_g",
-            "mean_genset_load_frac",
-            "wet_stacking_fraction",
-            "renewable_fraction",
-            "genset_starts",
-            "critical_unserved_kwh",
-            "freeze_violation_steps",
-        ]
-    ]
+    summary_df = compare_multi(all_results)
+    # compare_multi's table is in kL; the percentage comparison below wants raw
+    # litres and starts, computed the same way (mean across held-out seeds).
+    means = {
+        label: {
+            "fuel_l": sum(r.summary["fuel_l"] for r in results) / len(results),
+            "genset_starts": sum(r.summary["genset_starts"] for r in results) / len(results),
+        }
+        for label, results in all_results.items()
+    }
     print("mean across held-out seeds:")
     print(summary_df.round(3).to_string())
 

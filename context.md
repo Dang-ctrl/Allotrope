@@ -16,8 +16,8 @@ Last updated: 2026-09-05, end of Phase 5 (autonomous overnight session).
 | Repo | https://github.com/Dang-ctrl/Allotrope (public, `main`) |
 | Local | `E:\CODE\Allotrope` |
 | Phase | **5 of 5 code-complete** — see caveats below; not everything is tested to the same depth |
-| Tests | 194 passing |
-| Commits | `db4b9ab` Plant · `6d42c9b` Guarantee · `d0f9ca9` Docs · `14e4303` Agents · `6f11585` Twin · `ca028cf` System |
+| Tests | 204 passing |
+| Commits | `db4b9ab` Plant · `6d42c9b` Guarantee · `d0f9ca9` Docs · `14e4303` Agents · `6f11585` Twin · `ca028cf` System · `c35a68a` Phase 3 results · `8866e8d` Federated checkpoint fix |
 
 **This was an autonomous overnight session** (user asked to "complete the project" while asleep, using judgment for decisions without stopping to ask). Everything below was built, tested, and committed without further confirmation. Nothing has been pushed to the remote yet as of this writing — confirm with the user before pushing, since the repo is public and this is a large, unreviewed batch of work.
 
@@ -94,15 +94,33 @@ different point on the trade-off surface, not a worse one by its own
 objective. State this honestly if asked: the agent beats the target metric it
 was built to beat, and trades a secondary one to do it.
 
-**A real bug was found and fixed getting to this number**: the first training
-run (300 episodes, discarded) used exploration-decay defaults tuned for
-~1000 episodes, so it finished with the DQN still 40% random. Every number
-from that run was noise, not policy. `scripts/train_agent.py` now derives the
-decay schedule from the actual episode count requested. A second bug, in
-`scripts/evaluate_agent.py` itself, transposed the summary DataFrame
-backwards (`pd.DataFrame(means)` needed `.T`) and was caught only because the
-script crashed outright rather than silently printing wrong numbers — no test
-covers this CLI script directly, which is a real gap (see Open questions).
+Bharati (`checkpoints/bharati.pt`), same protocol, held-out seeds 100–104:
+
+| | Legacy N+1 | Efficient rules | **Hybrid DQN+SDDPG** |
+|---|---|---|---|
+| Fuel | 264.5 kL | 205.4 kL | **193.8 kL** |
+| Black carbon | 95 085 g | 40 654 g | 40 722 g |
+| Genset starts/year | 185.4 | 140.0 | **14.8** |
+| Life support unserved | 0 | 0 | **0** |
+
+Different station, different optimum: Bharati's agent found **5.6% less fuel**
+and **89% fewer starts** than the rule-based baseline, essentially eliminating
+cycling, at the cost of a higher wet-stacking fraction (0.599 vs 0.257) and
+flat black carbon. Maitri's agent instead cut starts more modestly (23%) and
+traded away more black-carbon performance. Both are legitimate optima under
+the same reward weights — report both, not just the flattering one.
+
+**Two real bugs were found and fixed getting to these numbers.** First: the
+initial training run (300 episodes, discarded) used exploration-decay defaults
+tuned for ~1000 episodes, so it finished with the DQN still 40% random —
+every number from that run was noise, not policy. `scripts/train_agent.py`
+now derives the decay schedule from the actual episode count requested.
+Second: `scripts/evaluate_agent.py` itself built its summary table with rows
+and columns transposed (`pd.DataFrame(means)` needed `.T`), caught only
+because it crashed rather than silently printing a wrong table. Fixed
+properly, not patched: the averaging-and-tabulating logic moved into
+`allotrope.sim.runner.compare_multi`, a tested library function
+(`tests/test_runner.py`), rather than staying as untested script code.
 
 ## Phase 4 results — the twin
 
@@ -127,16 +145,18 @@ work end to end by anything in this session.
 
 ## Open questions and known gaps
 
-- **Bharati agent + federated training**: were queued to run in the background
-  after Maitri's evaluation. Check `checkpoints/bharati.pt` and this file's
-  git history / commit log for whether they landed and what they showed. If
-  this section still says "pending" and no later commit addresses it, the
-  session ended before they finished — pick them up before claiming the
-  federated learning result as validated.
-- **`evaluate_agent.py` and `run_baseline.py` have no dedicated tests.** The
-  library code they call is thoroughly tested; the scripts' own
-  DataFrame-construction and printing logic is not, and one real bug there
-  (see above) was only caught by a crash. Worth a minimal smoke test.
+- **Bharati agent: done** (`checkpoints/bharati.pt`), results above.
+  **Federated training**: a real run (`scripts/run_federated.py --rounds 30
+  --local-episodes 15`) was launched in the background. Check
+  `checkpoints/federated.pt` and the commit log for whether it landed — if
+  this line is unchanged and no later commit mentions it, the session ended
+  before it finished.
+- **`evaluate_agent.py`'s reporting bug is fixed properly**, not merely
+  patched: the averaging/tabulating logic that had rows and columns
+  transposed moved into `allotrope.sim.runner.compare_multi`, now covered by
+  `tests/test_runner.py`. `run_baseline.py` still has no dedicated test for
+  its own printing logic, which is a smaller residual version of the same
+  gap — low risk since it does far less than `evaluate_agent.py` did.
 - **The freeze guarantee is still not exercised by the safety audit** — same
   gap noted at the end of Phase 2. Boilers cover heat independently of the
   controller in every attack scenario tried. Unchanged by Phases 3–5.

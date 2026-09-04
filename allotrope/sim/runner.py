@@ -132,4 +132,40 @@ def compare(results: list[EpisodeResult], keys: list[str] | None = None) -> pd.D
     )
 
 
+DEFAULT_COMPARISON_KEYS = [
+    "fuel_kl",
+    "black_carbon_g",
+    "mean_genset_load_frac",
+    "wet_stacking_fraction",
+    "renewable_fraction",
+    "genset_starts",
+    "critical_unserved_kwh",
+    "freeze_violation_steps",
+]
+
+
+def compare_multi(
+    results_by_label: dict[str, list[EpisodeResult]], keys: list[str] | None = None
+) -> pd.DataFrame:
+    """Mean-across-seeds comparison table: one column per label, one row per metric.
+
+    This is the multi-seed counterpart to `compare` -- averaging each label's
+    list of episode results (e.g. one per held-out seed) before laying them out
+    the same way, metrics as rows and labels as columns. Kept here rather than
+    duplicated in a reporting script, because a script's own DataFrame-shape
+    logic is exactly the kind of code that looks obviously right and silently
+    is not: an earlier, untested version of this in scripts/evaluate_agent.py
+    built the same table with rows and columns transposed.
+    """
+    keys = keys or DEFAULT_COMPARISON_KEYS
+    columns = {}
+    for label, results in results_by_label.items():
+        if not results:
+            raise ValueError(f"{label!r} has no results to average")
+        columns[label] = {
+            k: sum(r.summary.get(k, float("nan")) for r in results) / len(results) for k in keys
+        }
+    return pd.DataFrame(columns)
+
+
 __all__ = ["build_plant", "run_episode", "compare", "EpisodeResult"]

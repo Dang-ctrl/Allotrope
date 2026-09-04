@@ -102,23 +102,29 @@ learned agent nothing to demonstrate.
 
 ### The learned agent
 
-`HybridAgent` (DQN + SDDPG), evaluated at Maitri on **held-out seeds** the
-policy never trained on — `python scripts/evaluate_agent.py --station maitri
---checkpoint checkpoints/maitri.pt`:
+`HybridAgent` (DQN + SDDPG), evaluated on **held-out seeds** (100–104,
+disjoint from every training seed) the policy never trained on —
+`python scripts/evaluate_agent.py --station <maitri|bharati> --checkpoint checkpoints/<station>.pt`:
 
 | | Efficient rules | **Hybrid DQN + SDDPG** |
 |---|---|---|
-| Fuel | 213.4 kL | **209.6 kL** (−1.8 %) |
-| Black carbon | **10 617 g** | 15 931 g |
-| Genset starts/year | 272.2 | **210.0** (−22.9 %) |
-| Life support unserved, every held-out seed | 0 | **0** |
+| **Maitri** fuel | 213.4 kL | **209.6 kL** (−1.8 %) |
+| Maitri black carbon | **10 617 g** | 15 931 g |
+| Maitri genset starts/year | 272.2 | **210.0** (−22.9 %) |
+| **Bharati** fuel | 205.4 kL | **193.8 kL** (−5.6 %) |
+| Bharati black carbon | 40 654 g | 40 722 g (flat) |
+| Bharati genset starts/year | 140.0 | **14.8** (−89 %) |
+| Life support unserved, every held-out seed, both stations | 0 | **0** |
 
-The agent beats the rule-based bar it was built to clear — less fuel and far
-fewer machine starts — while trading a higher black-carbon figure to do it.
-That trade is a property of the reward's stated prices (`RewardWeights`), not
-an unintended shortfall: fuel and starts are priced more heavily than black
-carbon in absolute terms, so the policy is optimising a genuinely different
-point on the trade-off surface, not a worse one by its own objective.
+The agent beats the rule-based bar it was built to clear at both stations —
+less fuel in each case — but finds a *different* trade-off at each one. At
+Maitri it cuts starts by 23 % and trades away some black-carbon performance;
+at Bharati it nearly eliminates cycling (14.8 starts/year, close to the
+incumbent's own habits) while holding black carbon flat. Neither trade is a
+bug: `RewardWeights` prices fuel and starts more heavily than black carbon in
+absolute terms, so both policies are optimising the same stated objective,
+just landing at different points its trade-off surface allows. Report both
+numbers, not only the more flattering one.
 
 ## The safety guarantee
 

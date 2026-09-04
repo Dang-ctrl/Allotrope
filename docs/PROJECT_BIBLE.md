@@ -403,8 +403,33 @@ evaluated. A second, unrelated bug in `evaluate_agent.py` itself — a
 transposed pandas DataFrame — was caught only because it crashed outright;
 see §11 for what that implies about test coverage of the reporting scripts.
 
-**Bharati and federated training**: see [../context.md](../context.md) for
-whether these landed in this session or remain open.
+**Bharati**, `checkpoints/bharati.pt`, same protocol, evaluated on the same
+held-out seeds 100–104:
+
+| | Legacy N+1 | Efficient rules | **Hybrid DQN+SDDPG** |
+|---|---|---|---|
+| Fuel | 264.5 kL | 205.4 kL | **193.8 kL** |
+| Black carbon | 95 085 g | 40 654 g | 40 722 g |
+| Mean load factor | 0.180 | 0.374 | 0.296 |
+| Wet-stacking fraction | 0.934 | 0.257 | 0.599 |
+| Genset starts/year | 185.4 | 140.0 | **14.8** |
+| Life support unserved | 0 | 0 | **0** |
+
+At Bharati the agent found a different point on the trade-off surface than at
+Maitri: **5.6 % less fuel** than `EfficientRuleBased` and a striking **89 %
+fewer genset starts** (14.8/year, close to the incumbent's own 185.4 — the
+agent essentially learned not to cycle machines at all), paid for with a
+higher wet-stacking fraction than the rule-based baseline (though far below
+the incumbent's 0.934) and black carbon roughly flat rather than improved.
+This is a real, station-specific optimum under the same reward weights, not a
+worse Maitri result — report both numbers rather than only the flattering one
+from either station.
+
+**Federated training** across both stations (FedAvg, `scripts/run_federated.py`)
+was run for a real result, not only the short mechanism-check runs
+`tests/test_federated.py` uses. See [../context.md](../context.md) for whether
+it completed and what it showed by the time this is read — check the commit
+log if this paragraph looks unfinished.
 
 ## 9. The network twin and Volt-VAr/Volt-Watt
 
@@ -550,18 +575,20 @@ rather than silently dropped.
 - **Not a C-HIL result.** Software-in-the-loop only, so far. The gRPC
   interface built in Phase 5 is what a HIL rig would sit behind, but no rig
   has been connected.
-- **Not a deployed federated-learning result.** The mechanism is real and
-  tested (§10, §11); no long training run across real station conditions
-  (rather than the short runs used to test the mechanism) has produced a
-  reportable federated policy as of this writing — check
-  [../context.md](../context.md) for whether that changed later in this
-  session.
+- **The federated-learning result's status depends on when this is read.** The
+  mechanism is real and tested (§10, §11) at small scale; whether a full
+  `scripts/run_federated.py` run had completed and produced a reportable
+  policy by the time this document was last edited is stated in §8 and
+  [../context.md](../context.md) — check both rather than assuming either way.
 - **Not an end-to-end infrastructure deployment.** See §11's table. Every
   piece is real, tested Python; the containerised stack running together has
   not been started in this environment.
-- **The Bharati agent may not exist yet at time of reading.** Only Maitri's
-  held-out result is reported in §8 as of this document's last update; check
-  `checkpoints/` and the commit log before assuming otherwise.
+- **Single-station results, not a general claim about learned control at any
+  polar station.** Two stations, two independently-trained checkpoints, each
+  beating its own `EfficientRuleBased` baseline on fuel but by different
+  margins and via different trade-offs (§8). That is evidence the approach
+  works at the two stations this project models, not evidence it generalises
+  to a station this model has not seen.
 
 ## 13. Maintenance
 
