@@ -19,7 +19,7 @@ import argparse
 
 import pandas as pd
 
-from allotrope.agents.checkpoint import load
+from allotrope.agents.checkpoint import load, load_federated
 from allotrope.config import load_station
 from allotrope.control.baseline import EfficientRuleBased, LegacyNPlusOne
 from allotrope.safety.fallback import GuardedController
@@ -34,20 +34,26 @@ def main() -> None:
     parser.add_argument("--checkpoint", default="checkpoints/agent.pt")
     parser.add_argument("--periods", type=int, default=8760)
     parser.add_argument("--seeds", type=int, nargs="+", default=HELD_OUT_SEEDS)
+    parser.add_argument(
+        "--federated", action="store_true",
+        help="checkpoint is a federated one (from scripts/run_federated.py), "
+        "checked for network-shape compatibility rather than an exact station match",
+    )
     args = parser.parse_args()
 
     cfg = load_station(args.station)
-    agent = load(args.checkpoint, cfg)
+    agent = load_federated(args.checkpoint, cfg) if args.federated else load(args.checkpoint, cfg)
     guarded_agent = GuardedController(cfg, agent=agent)
 
     pd.set_option("display.width", 150)
-    all_results = {"legacy_n_plus_one": [], "efficient_rule_based": [], "hybrid_dqn_sddpg": []}
+    agent_label = "federated_dqn_sddpg" if args.federated else "hybrid_dqn_sddpg"
+    all_results = {"legacy_n_plus_one": [], "efficient_rule_based": [], agent_label: []}
 
     for seed in args.seeds:
         for controller in (LegacyNPlusOne(cfg), EfficientRuleBased(cfg), guarded_agent):
             plant = build_plant(cfg, periods=args.periods, seed=seed)
             result = run_episode(plant, controller)
-            label = "hybrid_dqn_sddpg" if controller is guarded_agent else result.controller
+            label = agent_label if controller is guarded_agent else result.controller
             all_results[label].append(result)
 
     print(f"\n{cfg.site.name}  |  {args.periods} steps  |  held-out seeds {args.seeds}")
@@ -67,16 +73,16 @@ def main() -> None:
     print(summary_df.round(3).to_string())
 
     fuel_vs_efficient = (
-        means["efficient_rule_based"]["fuel_l"] - means["hybrid_dqn_sddpg"]["fuel_l"]
+        means["efficient_rule_based"]["fuel_l"] - means[agent_label]["fuel_l"]
     ) / means["efficient_rule_based"]["fuel_l"]
-    starts_vs_efficient = means["hybrid_dqn_sddpg"]["genset_starts"] - means["efficient_rule_based"]["genset_starts"]
+    starts_vs_efficient = means[agent_label]["genset_starts"] - means["efficient_rule_based"]["genset_starts"]
 
     print(f"\nhybrid agent versus the efficient rule-based bar it must clear:")
     print(f"  fuel            {fuel_vs_efficient:+.1%}")
     print(f"  genset starts   {starts_vs_efficient:+.1f} per year")
 
-    max_unserved = max(r.summary["critical_unserved_kwh"] for r in all_results["hybrid_dqn_sddpg"])
-    max_freeze = max(r.summary["freeze_violation_steps"] for r in all_results["hybrid_dqn_sddpg"])
+    max_unserved = max(r.summary["critical_unserved_kwh"] for r in all_results[agent_label])
+    max_freeze = max(r.summary["freeze_violation_steps"] for r in all_results[agent_label])
     print()
     if max_unserved <= 1e-6 and max_freeze == 0:
         print("  SAFETY: the guarded agent shed no life support and caused no freeze "

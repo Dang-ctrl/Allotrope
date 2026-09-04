@@ -64,7 +64,7 @@ that covers and which it doesn't.
 | Safety projection layer, deterministic fallback, Gymnasium env | done |
 | DQN + SDDPG agents, training, checkpointing | done — see results below |
 | OpenDSS network twin, Volt-VAr / Volt-Watt fallback | done |
-| Federated learning across stations (FedAvg) | done — mechanism tested; see caveats |
+| Federated learning across stations (FedAvg) | mechanism done and tested; a real 30-round run **did not beat** the single-station agents — see below |
 | gRPC actuation interface | done |
 | MQTT telemetry link, TimescaleDB bridge | done |
 | Containers, Grafana HMI | code written, **not run end to end** in this environment |
@@ -125,6 +125,30 @@ bug: `RewardWeights` prices fuel and starts more heavily than black carbon in
 absolute terms, so both policies are optimising the same stated objective,
 just landing at different points its trade-off surface allows. Report both
 numbers, not only the more flattering one.
+
+### Federated training — a negative result, reported as one
+
+`scripts/run_federated.py`, 30 rounds × 15 local episodes per station, FedAvg
+across Maitri and Bharati simultaneously. Evaluated the same way as above:
+
+| | Efficient rules | **Federated** |
+|---|---|---|
+| Maitri fuel | 213.4 kL | 225.3 kL (**+5.6 %**, worse) |
+| Bharati fuel | 205.4 kL | 210.1 kL (**+2.3 %**, worse) |
+| Life support unserved, both stations, every seed | 0 | **0** |
+
+The federated policy does not beat `EfficientRuleBased` at either station, and
+underperforms each station's own dedicated single-agent checkpoint above by a
+wide margin. The training log shows why: reward fluctuates across all 30
+rounds with no visible convergence trend, consistent with FedAvg client drift
+— each site gets only 15 local episodes to adapt before its weights are
+averaged back toward the other site's differently-adapted ones. The safety
+guarantee holds exactly as well as everywhere else in this project regardless
+of training quality, which is the one property that has to be true here no
+matter what. The mechanism itself is real and tested end to end
+(`tests/test_federated.py`); this particular training configuration simply
+does not yet produce a policy worth deploying, and that is reported plainly
+rather than tuned until the number looked better.
 
 ## The safety guarantee
 

@@ -145,12 +145,18 @@ work end to end by anything in this session.
 
 ## Open questions and known gaps
 
-- **Bharati agent: done** (`checkpoints/bharati.pt`), results above.
-  **Federated training**: a real run (`scripts/run_federated.py --rounds 30
-  --local-episodes 15`) was launched in the background. Check
-  `checkpoints/federated.pt` and the commit log for whether it landed — if
-  this line is unchanged and no later commit mentions it, the session ended
-  before it finished.
+- **Bharati agent: done**, results above. **Federated training: done, and
+  negative.** 30 rounds × 15 local episodes (`checkpoints/federated.pt`)
+  underperforms `EfficientRuleBased` at both stations (+5.6% fuel at Maitri,
+  +2.3% at Bharati) and underperforms each station's own single-agent
+  checkpoint substantially. Safety held perfectly regardless — zero unserved,
+  zero freeze, both stations, every held-out seed. The training log shows no
+  convergence trend across 30 rounds (reward fluctuating −1850 to −4700),
+  consistent with FedAvg client drift under a short 15-episode local window.
+  Not pursued further — see docs/PROJECT_BIBLE.md §8 for why chasing a better
+  number here would have been the wrong move. **If someone wants a working
+  federated policy**, the next thing to try is more local episodes per round
+  (e.g. 40-50) with fewer total rounds, or a FedProx-style proximal term.
 - **`evaluate_agent.py`'s reporting bug is fixed properly**, not merely
   patched: the averaging/tabulating logic that had rows and columns
   transposed moved into `allotrope.sim.runner.compare_multi`, now covered by

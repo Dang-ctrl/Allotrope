@@ -425,11 +425,41 @@ This is a real, station-specific optimum under the same reward weights, not a
 worse Maitri result — report both numbers rather than only the flattering one
 from either station.
 
-**Federated training** across both stations (FedAvg, `scripts/run_federated.py`)
-was run for a real result, not only the short mechanism-check runs
-`tests/test_federated.py` uses. See [../context.md](../context.md) for whether
-it completed and what it showed by the time this is read — check the commit
-log if this paragraph looks unfinished.
+**Federated training** across both stations, 30 rounds × 15 local episodes per
+site (`scripts/run_federated.py`), evaluated the same way against both
+stations' held-out seeds:
+
+| | Efficient rules (Maitri) | **Federated** (Maitri) | Efficient rules (Bharati) | **Federated** (Bharati) |
+|---|---|---|---|---|
+| Fuel | 213.4 kL | 225.3 kL (**+5.6 %**) | 205.4 kL | 210.1 kL (**+2.3 %**) |
+| Black carbon | 10 617 g | 50 034 g | 40 654 g | 57 109 g |
+| Genset starts/year | 272.2 | 297.8 | 140.0 | 258.8 |
+| Life support unserved | 0 | **0** | 0 | **0** |
+
+**This is a legitimate negative result, reported as one.** The federated
+policy does not beat `EfficientRuleBased` at either station, and underperforms
+both stations' own dedicated single-station checkpoints (§8) by a wide margin
+on every efficiency metric. It still beats `LegacyNPlusOne` substantially, and
+the safety guarantee holds exactly as well as everywhere else in this project
+— zero life-support loss and zero freeze violations, both stations, every
+held-out seed. Safety not depending on training quality is the one property
+that must be true regardless of this result, and it is.
+
+The training log's own reward trace explains why: round-to-round reward
+fluctuates in a wide band (roughly −1 850 to −4 700) with no visible downward
+trend across all 30 rounds, unlike the clean single-station convergence in §8.
+The likely cause is client drift, a known FedAvg failure mode: each site gets
+only 15 local episodes to adapt before its weights are averaged back toward
+the other site's differently-adapted ones, which may simply not be enough
+local training between averages for either site's progress to survive the
+average. Plausible next steps — more local episodes per round, fewer total
+rounds, or a proximal term (FedProx-style) penalising local drift from the
+global weights — were not pursued here, because doing so only to report a
+better number would be exactly the anti-pattern
+`scripts/evaluate_agent.py` itself warns against when a checkpoint falls
+short. The mechanism is correct and tested (§10, §11); this configuration of
+it does not yet produce a policy worth deploying over either station's own
+dedicated training.
 
 ## 9. The network twin and Volt-VAr/Volt-Watt
 
@@ -575,11 +605,13 @@ rather than silently dropped.
 - **Not a C-HIL result.** Software-in-the-loop only, so far. The gRPC
   interface built in Phase 5 is what a HIL rig would sit behind, but no rig
   has been connected.
-- **The federated-learning result's status depends on when this is read.** The
-  mechanism is real and tested (§10, §11) at small scale; whether a full
-  `scripts/run_federated.py` run had completed and produced a reportable
-  policy by the time this document was last edited is stated in §8 and
-  [../context.md](../context.md) — check both rather than assuming either way.
+- **Not a federated-learning result worth deploying.** The mechanism is real
+  and tested (§10, §11), and a full 30-round run completed and was evaluated
+  (§8) — the honest outcome is that it does not beat `EfficientRuleBased` at
+  either station, or either station's own dedicated single-agent checkpoint.
+  Safety held perfectly regardless. Cite this as "the mechanism works and was
+  tested end to end," not as "federated training improved the policy" —
+  it did not, in the one configuration tried.
 - **Not an end-to-end infrastructure deployment.** See §11's table. Every
   piece is real, tested Python; the containerised stack running together has
   not been started in this environment.
