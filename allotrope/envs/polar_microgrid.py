@@ -38,6 +38,50 @@ SECONDS_PER_DAY = 86_400.0
 DAYS_PER_YEAR = 365.25
 
 
+def observation_vector(
+    obs: dict, cfg: StationConfig, power_scale_kw: float, melt_ceiling_kw: float
+) -> np.ndarray:
+    """Build the normalised feature vector from a raw plant observation.
+
+    Factored out of the environment so a deployed agent can build the identical
+    vector from `plant.observe()` directly, without needing a live `gym.Env`
+    around it. Training and deployment must see the same numbers, or a policy
+    trained in one place will misbehave in the other.
+    """
+    timestamp = obs["timestamp"]
+    seconds = timestamp.hour * 3600 + timestamp.minute * 60
+    day_angle = 2.0 * np.pi * seconds / SECONDS_PER_DAY
+    year_angle = 2.0 * np.pi * timestamp.dayofyear / DAYS_PER_YEAR
+
+    features = [
+        obs["electrical_load_kw"] / power_scale_kw,
+        obs["critical_load_kw"] / power_scale_kw,
+        obs["firm_thermal_kw"] / power_scale_kw,
+        obs["pv_available_kw"] / power_scale_kw,
+        obs["wind_available_kw"] / power_scale_kw,
+        obs["air_temp_c"] / 40.0,
+        obs["wind_speed_ms"] / 25.0,
+        (obs["indoor_temp_c"] - cfg.thermal.indoor_setpoint_c) / 10.0,
+        obs["snow_melt_remaining_kwh"] / max(melt_ceiling_kw * 24.0, 1.0),
+        np.sin(day_angle),
+        np.cos(day_angle),
+        np.sin(year_angle),
+    ]
+    features += [float(v) for v in obs["genset_online"]]
+    features += [p / g.rated_kw for p, g in zip(obs["genset_power_kw"], cfg.gensets)]
+    features += [float(d) for d in obs["genset_deposit"]]
+    features += [float(s) for s in obs["battery_soc"]]
+    features += [
+        obs["battery_max_discharge_kw"][k] / max(s.max_discharge_kw, 1.0)
+        for k, s in enumerate(cfg.storage)
+    ]
+    return np.clip(np.asarray(features, dtype=np.float32), -5.0, 5.0)
+
+
+def observation_width(cfg: StationConfig) -> int:
+    return 12 + 3 * len(cfg.gensets) + 2 * len(cfg.storage)
+
+
 class PolarMicrogridEnv(gym.Env):
     """A polar station microgrid as a Gymnasium environment.
 
@@ -106,7 +150,7 @@ class PolarMicrogridEnv(gym.Env):
         return max(self.cfg.total_genset_kw, 1.0)
 
     def _observation_width(self) -> int:
-        return 12 + 3 * len(self.cfg.gensets) + 2 * len(self.cfg.storage)
+        return observation_width(self.cfg)
 
     # -- gym api ----------------------------------------------------------
 
@@ -221,38 +265,9 @@ class PolarMicrogridEnv(gym.Env):
     # -- observation ------------------------------------------------------
 
     def _observe(self) -> np.ndarray:
-        obs = self.plant.observe()
-        cfg = self.cfg
-        scale = self._power_scale_kw
-        timestamp = obs["timestamp"]
-
-        seconds = timestamp.hour * 3600 + timestamp.minute * 60
-        day_angle = 2.0 * np.pi * seconds / SECONDS_PER_DAY
-        year_angle = 2.0 * np.pi * timestamp.dayofyear / DAYS_PER_YEAR
-
-        features = [
-            obs["electrical_load_kw"] / scale,
-            obs["critical_load_kw"] / scale,
-            obs["firm_thermal_kw"] / scale,
-            obs["pv_available_kw"] / scale,
-            obs["wind_available_kw"] / scale,
-            obs["air_temp_c"] / 40.0,
-            obs["wind_speed_ms"] / 25.0,
-            (obs["indoor_temp_c"] - cfg.thermal.indoor_setpoint_c) / 10.0,
-            obs["snow_melt_remaining_kwh"] / max(self.projection.melt_ceiling_kw() * 24.0, 1.0),
-            np.sin(day_angle),
-            np.cos(day_angle),
-            np.sin(year_angle),
-        ]
-        features += [float(v) for v in obs["genset_online"]]
-        features += [p / g.rated_kw for p, g in zip(obs["genset_power_kw"], cfg.gensets)]
-        features += [float(d) for d in obs["genset_deposit"]]
-        features += [float(s) for s in obs["battery_soc"]]
-        features += [
-            obs["battery_max_discharge_kw"][k] / max(s.max_discharge_kw, 1.0)
-            for k, s in enumerate(cfg.storage)
-        ]
-        return np.clip(np.asarray(features, dtype=np.float32), -5.0, 5.0)
+        return observation_vector(
+            self.plant.observe(), self.cfg, self._power_scale_kw, self.projection.melt_ceiling_kw()
+        )
 
     def _mean_deposit(self) -> float:
         return float(np.mean([g.state.deposit for g in self.plant.gensets]))
