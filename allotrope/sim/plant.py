@@ -169,8 +169,8 @@ class PolarMicrogrid:
             "genset_can_start": [g.can_start for g in self.gensets],
             "genset_can_stop": [g.can_stop for g in self.gensets],
             "battery_soc": [b.state.soc for b in self.batteries],
-            "battery_max_charge_kw": [b.max_charge_kw() for b in self.batteries],
-            "battery_max_discharge_kw": [b.max_discharge_kw() for b in self.batteries],
+            "battery_max_charge_kw": [b.max_charge_kw(self.dt_h) for b in self.batteries],
+            "battery_max_discharge_kw": [b.max_discharge_kw(self.dt_h) for b in self.batteries],
         }
 
     # -- dispatch ----------------------------------------------------------
