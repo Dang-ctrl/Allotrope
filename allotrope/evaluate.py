@@ -35,7 +35,10 @@ from allotrope.sim.runner import build_plant, compare, run_episode
 
 
 def load_checkpoint(path: Path) -> tuple[BranchingDQN, SDDPG, dict]:
-    state = torch.load(path, map_location="cpu", weights_only=False)
+    # weights_only=True restricts unpickling to tensors and plain built-in
+    # containers/scalars -- exactly what allotrope.train.train() saves -- so a
+    # checkpoint file cannot smuggle arbitrary code execution via pickle.
+    state = torch.load(path, map_location="cpu", weights_only=True)
     dqn = BranchingDQN(state["obs_dim"], state["n_gensets"], DQNConfig())
     sddpg = SDDPG(state["obs_dim"], state["dispatch_dim"], SDDPGConfig())
     dqn.load_state_dict(state["dqn"])

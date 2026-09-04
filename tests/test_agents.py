@@ -171,7 +171,7 @@ def test_checkpoint_round_trip_preserves_behaviour(tmp_path):
         },
         path,
     )
-    state = torch.load(path, weights_only=False)
+    state = torch.load(path, weights_only=True)
     dqn2 = BranchingDQN(state["obs_dim"], state["n_gensets"], DQNConfig(seed=99))
     sddpg2 = SDDPG(state["obs_dim"], state["dispatch_dim"], SDDPGConfig(seed=99))
     dqn2.load_state_dict(state["dqn"])
