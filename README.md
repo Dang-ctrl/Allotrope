@@ -47,7 +47,9 @@ on station.
 
 ## Status
 
-Phases 1 and 2 of 5 are complete: **the plant**, and **the guarantee**.
+Phase 1 (**the plant**) and Phase 2 (**the guarantee**) are complete. Phase 3
+(**the agents**) is implemented, safety-integrated and tested; competitive
+training is in progress, not yet claimed.
 
 | Component | State |
 |---|---|
@@ -59,7 +61,9 @@ Phases 1 and 2 of 5 are complete: **the plant**, and **the guarantee**.
 | Rule-based baselines — legacy N+1 and efficient | done |
 | Safety projection layer and deterministic fallback | done |
 | Gymnasium environment and reward | done |
-| DQN + SDDPG agents | next |
+| Branching DQN (commitment) + SDDPG (dispatch), safety-integrated | implemented and tested; see [docs/reinforcement-learning.md](docs/reinforcement-learning.md) |
+| Local experiment tracking (`allotrope/experiment.py`, `runs/`) | done |
+| Scenario benchmark across hundreds/thousands of seeds | planned |
 | Federated learning across stations | planned |
 | MQTT / gRPC control plane, Grafana HMI, containers | planned |
 
@@ -153,10 +157,14 @@ allotrope/
   config/        station YAML and its typed, validated loader
   synth/         synthetic climate and demand generation
   sim/           asset models, the plant, the episode runner
-  control/       rule-based baselines; learned agents to follow
-  safety/        the projection layer and the deterministic fallback
+  control/       rule-based baselines
+  safety/        the projection layer, the deterministic fallback, GuardedController
   envs/          the Gymnasium environment and the reward
-docs/            calibration and design notes
+  agents/        BranchingDQN, SDDPG, HybridAgent, the replay buffer
+  train.py       training CLI: python -m allotrope.train --agent {dqn,sddpg,hybrid}
+  evaluate.py    evaluation CLI: python -m allotrope.evaluate --checkpoint ...
+  experiment.py  local, file-based experiment tracking (runs/<run_id>/record.json)
+docs/            calibration, reinforcement learning, and other design notes
 scripts/         entry points
 tests/           invariants, including the ones the project's claims rest on
 ```
