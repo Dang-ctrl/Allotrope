@@ -52,8 +52,8 @@ class RunRecord:
     config: dict[str, Any]
     started_at: float
     finished_at: float | None = None
-    metrics: dict[str, float] = field(default_factory=dict)
-    history: list[dict[str, float]] = field(default_factory=list)
+    metrics: dict[str, float | None] = field(default_factory=dict)
+    history: list[dict[str, float | None]] = field(default_factory=list)
     checkpoint_path: str | None = None
     env_version: str = "polar_microgrid_v1"
 
@@ -82,11 +82,11 @@ class ExperimentTracker:
         )
         self._save()
 
-    def log(self, step: int, metrics: dict[str, float]) -> None:
+    def log(self, step: int, metrics: dict[str, float | None]) -> None:
         self.record.history.append({"step": step, **metrics})
         self._save()
 
-    def finish(self, metrics: dict[str, float], checkpoint_path: str | None = None) -> None:
+    def finish(self, metrics: dict[str, float | None], checkpoint_path: str | None = None) -> None:
         self.record.metrics = metrics
         self.record.checkpoint_path = checkpoint_path
         self.record.finished_at = time.time()

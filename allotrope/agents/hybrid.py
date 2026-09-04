@@ -67,11 +67,11 @@ class HybridAgent:
         dispatch = self.sddpg.act(obs_vec, deterministic=self.deterministic)
         action = {"genset_on": genset_on.astype(np.int8), "dispatch": dispatch}
         self._codec_env.plant = plant
-        return self._codec_env.decode_action(action)
+        return self._codec_env.decode_action(action, obs=observation)
 
     def _encode(self, observation: dict, plant: PolarMicrogrid) -> np.ndarray:
         self._codec_env.plant = plant
-        return self._codec_env._observe()
+        return self._codec_env._observe(obs=observation)
 
 
 __all__ = ["HybridAgent"]

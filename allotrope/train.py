@@ -22,7 +22,6 @@ in this codebase that did not have it built in by construction.
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 
 import numpy as np
@@ -107,7 +106,7 @@ def train(
             episode_reward = 0.0
             obs, _ = env.reset()
 
-        metrics: dict[str, float] = {}
+        metrics: dict[str, float | None] = {}
         if len(buffer) >= warmup_steps:
             batch_size = max(dqn.cfg.batch_size, sddpg.cfg.batch_size)
             batch = buffer.sample(batch_size, rng)
@@ -117,11 +116,15 @@ def train(
                 metrics.update(sddpg.update(batch))
 
         if step % LOG_EVERY == 0:
-            mean_return = float(np.mean(episode_return_log[-10:])) if episode_return_log else float("nan")
+            # None, not NaN, when no episode has completed yet: `float("nan")`
+            # serialises to the bareword `NaN`, which is not valid JSON and
+            # breaks any standards-conformant reader of runs/<id>/record.json.
+            mean_return = float(np.mean(episode_return_log[-10:])) if episode_return_log else None
             metrics["mean_episode_return"] = mean_return
             metrics["buffer_size"] = len(buffer)
             tracker.log(step, metrics)
-            print(f"step {step:>7}/{total_steps}  return[-10]={mean_return:8.3f}  {metrics}")
+            return_str = f"{mean_return:8.3f}" if mean_return is not None else "     n/a"
+            print(f"step {step:>7}/{total_steps}  return[-10]={return_str}  {metrics}")
 
     checkpoint_path = tracker.dir / "checkpoint.pt"
     torch.save(
@@ -138,7 +141,7 @@ def train(
     )
     final_metrics = {
         "mean_episode_return_last10": (
-            float(np.mean(episode_return_log[-10:])) if episode_return_log else float("nan")
+            float(np.mean(episode_return_log[-10:])) if episode_return_log else None
         ),
         "episodes_completed": len(episode_return_log),
     }

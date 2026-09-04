@@ -176,7 +176,9 @@ class PolarMicrogridEnv(gym.Env):
 
     # -- action decoding --------------------------------------------------
 
-    def decode_action(self, action: dict[str, Any]) -> DispatchCommand:
+    def decode_action(
+        self, action: dict[str, Any], obs: dict[str, Any] | None = None
+    ) -> DispatchCommand:
         """Map a normalised agent action onto a physical dispatch command.
 
         Continuous values arrive in [-1, 1]. Loading fractions are mapped onto
@@ -184,6 +186,11 @@ class PolarMicrogridEnv(gym.Env):
         agent cannot express an unreachable setpoint and does not have to learn
         where the minimum stable load is -- it is a property of the machine, and
         the environment already knows it.
+
+        Accepts an already-fetched `plant.observe()` dict for the same reason
+        `_observe` does: a caller that already has one (`HybridAgent`) should
+        not have to trigger a second call to get the battery envelope this
+        needs.
         """
         genset_on = np.asarray(action["genset_on"]).astype(bool).ravel()
         dispatch = np.asarray(action["dispatch"], dtype=float).ravel()
@@ -199,7 +206,7 @@ class PolarMicrogridEnv(gym.Env):
             span = g.rated_kw - g.min_stable_kw
             setpoints.append(g.min_stable_kw + span * (loading[k] + 1.0) / 2.0)
 
-        observation = self.plant.observe()
+        observation = self.plant.observe() if obs is None else obs
         battery = []
         for k in range(n_s):
             limit = (
@@ -220,8 +227,14 @@ class PolarMicrogridEnv(gym.Env):
 
     # -- observation ------------------------------------------------------
 
-    def _observe(self) -> np.ndarray:
-        obs = self.plant.observe()
+    def _observe(self, obs: dict[str, Any] | None = None) -> np.ndarray:
+        """Encode the plant's raw observation into the flat feature vector.
+
+        Accepts an already-fetched `plant.observe()` dict so a caller that has
+        one in hand (`HybridAgent`, notably) is not forced to trigger a second,
+        redundant call just to get it encoded.
+        """
+        obs = self.plant.observe() if obs is None else obs
         cfg = self.cfg
         scale = self._power_scale_kw
         timestamp = obs["timestamp"]

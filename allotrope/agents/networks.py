@@ -61,10 +61,11 @@ class DuelingBranchingQNetwork(nn.Module):
 class StochasticActor(nn.Module):
     """A squashed-Gaussian policy over the continuous dispatch action.
 
-    Outputs a mean and a state-independent-per-dimension log-std, both passed
-    through tanh so every action coordinate lands in [-1, 1] -- exactly the
-    range `PolarMicrogridEnv.decode_action` expects, and one the safety
-    projection then bounds further regardless.
+    Outputs a state-dependent mean and log-std (the latter clamped, then
+    exponentiated to a std). `.act` samples from that Gaussian and passes the
+    *sample* through tanh, so every action coordinate lands in [-1, 1] --
+    exactly the range `PolarMicrogridEnv.decode_action` expects, and one the
+    safety projection then bounds further regardless.
     """
 
     def __init__(self, obs_dim: int, act_dim: int, hidden: int = 128) -> None:

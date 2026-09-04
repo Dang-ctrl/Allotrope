@@ -8,9 +8,9 @@ would. So the pipeline this file cares about most is
 
     HybridAgent (raw proposal) -> GuardedController -> plant
 
-under the same random, seeded, freshly-initialised conditions run 1000 times
-each, with Hypothesis driving the seeds and the initial plant state rather
-than a fixed handful of examples chosen by hand.
+under the same random, seeded, freshly-initialised conditions, with
+Hypothesis driving the seeds and the initial plant state -- 25 examples per
+property below, not a fixed handful chosen by hand.
 """
 
 from __future__ import annotations
