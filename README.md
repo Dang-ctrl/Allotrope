@@ -28,10 +28,20 @@ twin of it. The architecture, in the order the signal flows:
 
 ```
 sensors and DERs  ->  digital twin  ->  safe DRL agent  ->  safety projection  ->  actuation
-CHP, PV, wind,        PyPSA +           DQN (discrete)      hard limits on         gRPC < 10 ms
-BESS, thermal         OpenDSS           + SDDPG             heating and            to inverters
-                      state est.        (continuous)        life support           and gensets
+CHP, PV, wind,        a hand-written    DQN (discrete)      hard limits on         gRPC < 10 ms
+BESS, thermal         power-balance     + SDDPG             heating and            to inverters
+                      sim + OpenDSS     (continuous)        life support           and gensets
+                      (Maitri only)
 ```
+
+Not PyPSA. `allotrope/sim/plant.py`'s `PolarMicrogrid` is a hand-written
+kW-in/kW-out power-balance model, not a PyPSA network -- PyPSA does not
+appear anywhere in this codebase. An earlier version of this diagram named
+it and was wrong; see [docs/audit-2026-09-05-next-gen-platform-plan.md](docs/audit-2026-09-05-next-gen-platform-plan.md)
+for how that was found. OpenDSS is real but narrower than this diagram
+implies on its own: single-feeder, Maitri only, Volt-Watt only (no
+reactive-power/Volt-VAr modelling) -- see
+[docs/network-safety.md](docs/network-safety.md).
 
 Two properties are not negotiable and are built in rather than trained in:
 
