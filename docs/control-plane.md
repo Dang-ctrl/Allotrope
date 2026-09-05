@@ -14,6 +14,10 @@ pip install -e ".[controlplane]"
 python -m allotrope.controlplane.server --port 50051
 ```
 
+Every RPC (`GetState`, `StreamState`, `Heartbeat`) requires an `x-api-key`
+metadata entry matching `ALLOTROPE_CONTROLPLANE_TOKEN` -- see
+"Authentication and stream limits" below.
+
 The schema lives in `allotrope/controlplane/allotrope.proto` — read it
 first; its own comments state what each field and RPC means and, in two
 places, explicitly what it does *not* cover. Regenerate the Python stubs
@@ -85,8 +89,35 @@ not built at install time, same as any other checked-in generated code.)
   rules warn against. If and when this project ingests real per-sensor
   telemetry rather than a simulator's own state, that's the point MQTT
   becomes the right tool, not before.
-- **No authentication or TLS** — `add_insecure_port`, matching the REST
-  API having none either. Both need addressing before either is reachable
-  from anywhere but localhost.
+- **No TLS/mTLS** — still `add_insecure_port` (plaintext on the wire). This
+  project's own adversarial audit's F5 also found *no authentication at
+  all*, which is now fixed (below); the remaining gap is real and
+  unaddressed: a token check stops an unauthenticated caller, not
+  eavesdropping or tampering on an unencrypted channel. Both matter before
+  this is reachable from anywhere but localhost.
 - **No persistence.** Sequence numbers and simulation state live only as
   long as the server process does, same as the REST API.
+
+## Authentication and stream limits
+
+Two more findings from this project's own adversarial audit, fixed here:
+
+- **F5 (no authentication)**: every RPC now checks `x-api-key` metadata
+  against a token, via `hmac.compare_digest` (constant-time). Set
+  `ALLOTROPE_CONTROLPLANE_TOKEN` before starting the server; if unset, one
+  is generated and logged once at startup rather than leaving the service
+  open by default. This does not replace TLS (see above) -- it stops an
+  unauthenticated *read*, which is what F5 actually found, not
+  eavesdropping on the wire.
+- **F6 (`StreamState` worker-pool exhaustion)**: a streaming call occupies
+  one thread-pool worker for its entire connection lifetime. With the
+  previous plain 8-worker pool, `MAX_CONCURRENT_STREAMS` (now 4)
+  simultaneous streaming clients that never disconnect would starve every
+  other RPC, `Heartbeat` included -- a trivial, unauthenticated-at-the-time
+  DoS. A bounded semaphore, acquired non-blockingly per stream, now caps
+  concurrent `StreamState` calls independently of the unary-RPC pool; a
+  client past the cap gets `RESOURCE_EXHAUSTED` immediately instead of
+  queuing forever behind one that never disconnects.
+  `tests/test_controlplane.py::test_a_stream_flood_cannot_starve_unary_rpcs`
+  reproduces the exact scenario and confirms `Heartbeat` keeps answering
+  throughout.
