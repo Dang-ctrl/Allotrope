@@ -125,9 +125,26 @@ through. Thirty midwinter days at Maitri, via `python scripts/run_safety_audit.p
 | Oscillate commitment every step | **0 kWh** | 33 309 kWh |
 
 The unguarded column is the control: without it, the guarded column would prove
-nothing. The projection also survives NaN and infinity in every field, commands
-of the wrong length, agents that raise, and agents that exceed the 10 ms control
-budget — a late answer being treated as a wrong answer.
+nothing. The projection also survives NaN and infinity in every field of
+the proposed **command**, commands of the wrong length, agents that raise,
+and agents that exceed the 10 ms control budget — a late answer being
+treated as a wrong answer.
+
+A second adversarial audit went further and attacked the **observation**
+instead of the command — a lying or failed sensor, not a malicious or
+malformed policy. It found a real gap: `battery_max_charge_kw` corrupted
+to NaN reached `np.clip()`'s bound argument unsanitised, produced a NaN
+battery command with zero recorded intervention, and permanently
+corrupted the plant's persistent SOC state. A corrupted `pv_available_kw`
+separately let the melt-shed-for-critical bound (guarantee 4 above) get
+bypassed entirely, because a NaN comparison is always `False` in Python.
+Fixed: every observation field the projection reads is now sanitised the
+same way the command already was, substituting whichever value keeps the
+projection more conservative, never less (`SafetyProjection.
+_sanitise_observation`). This is the kind of gap that survives casual
+review because the command path already looked airtight — the audit
+report's own headline finding is worth reading in full:
+[docs/audit-2026-09-05-v2-post-hardening.md](docs/audit-2026-09-05-v2-post-hardening.md).
 
 Two honest caveats. The freeze column is zero in *both* conditions, because the
 auxiliary boilers protect the heat supply independently of the controller; the
