@@ -78,7 +78,7 @@ run surfaced.
 | OpenDSS network twin + inverter-level Volt-Watt — see [docs/network-safety.md](docs/network-safety.md) | implemented and tested for Maitri (single-feeder, real OpenDSS power flow); Bharati has no network config yet; Volt-VAr not implemented (needs reactive-power modelling the plant doesn't have) |
 | gRPC control plane — see [docs/control-plane.md](docs/control-plane.md) | implemented and tested (state distribution + heartbeat, real server/client, real robustness cases); no command-injection RPC by design, no MQTT (documented why), no TLS/auth |
 | Federated learning across stations — see [docs/federated-learning.md](docs/federated-learning.md) | real FedAvg over network tensors, validation + rollback, tested; run for a handful of rounds as a smoke test, not to convergence or a competitive claim |
-| Grafana HMI, containers | planned |
+| MQTT telemetry link + TimescaleDB bridge — `allotrope/mqtt/`, `deploy/` | implemented and tested (real embedded-broker pub/sub, fake-connection SQL); Docker Compose stack (mosquitto, TimescaleDB, Grafana, per-station containers) written but not run end to end in this environment — see [deploy/README.md](deploy/README.md) for exactly which piece is proven where |
 
 ## Results so far
 
@@ -185,7 +185,9 @@ allotrope/
   api/           FastAPI backend over the live simulation, see docs/api.md
   controlplane/  gRPC state distribution + heartbeat, see docs/control-plane.md
   federated/     FedAvg across stations, validation + rollback, see docs/federated-learning.md
+  mqtt/          telemetry publish/subscribe + TimescaleDB bridge
 frontend/        React/TypeScript Command Center UI over the API, see frontend/README.md
+deploy/          Dockerfile, docker-compose.yml, Grafana/TimescaleDB provisioning, see deploy/README.md
 docs/            calibration, reinforcement learning, and other design notes
 scripts/         entry points
 tests/           invariants, including the ones the project's claims rest on
