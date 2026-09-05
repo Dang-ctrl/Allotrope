@@ -1,0 +1,46 @@
+name: CI
+
+# Found missing entirely in this project's own adversarial audit: there was
+# no CI configured on this repository at all, so every PR (including the
+# hardening one this workflow ships alongside) merged on the strength of
+# whoever ran the test suite locally remembering to do so, and saying so in
+# the PR description rather than a check GitHub itself could show green.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+      - name: Run test suite
+        run: python -m pytest -v
+
+  frontend:
+    name: Frontend build, typecheck, and tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Type-check and build
+        run: npm run build
+      - name: Run tests
+        run: npm run test
