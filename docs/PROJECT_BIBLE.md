@@ -726,8 +726,16 @@ subscribers now subscribe in `on_connect`, so it happens on the initial
 connect and every reconnect alike;
 `test_subscriber_resubscribes_after_a_broker_restart` (and its safety-topic
 twin) restart a real embedded broker mid-test and assert delivery resumes.
-Verified end to end afterwards: restart the broker, and rows resume within
-~45 s with no human intervention.
+Verified end to end afterwards, twice, and the two runs do not agree on
+timing — which is the useful part. A fast `docker compose restart mosquitto`
+recovers in ~45 s. A deliberate ~5-minute outage (`stop`, wait, `start`) took
+about **2.5 minutes** to resume after the broker was back, and looked like a
+failure at the 60-second mark. That is not a second bug: paho doubles its
+reconnect delay on each failed attempt up to a 120 s ceiling, so by the time a
+long-dead broker returns, the client may be most of the way through a two
+minute sleep. Recovery is unattended either way; **how long it takes scales
+with how long the broker was gone**, and anyone testing this should wait out
+the 120 s ceiling before concluding it is stuck.
 
 Worth recording for the same reason as the projection layer's pairwise-vs-joint
 bug in §6: it passed every test that existed, because no test had ever taken

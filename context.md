@@ -63,6 +63,18 @@ broker rather than a mock).
   `docker compose up -d` would work again. If this happens again: check
   whether the build log actually shows completion before assuming it's stuck,
   but be ready to just restart Docker Desktop.
+- **Vite's in-process restart silently drops the dev-server proxy.** When Vite
+  decides "config has changed" and restarts itself (it did so here merely
+  because files were deleted from `public/`), `/api` and `/ws` stop being
+  proxied to the API container and start returning `index.html` instead. The
+  UI then hangs forever on "Loading station data", and the console shows
+  `SyntaxError: Unexpected token '<', "<!doctype "... is not valid JSON` —
+  which reads like a broken API but is not: `curl localhost:8000/api/stations`
+  works fine throughout. **The fix is to kill `npm run dev` and start it
+  again**, not to debug the backend. Worth knowing before a demo, and worth
+  checking `curl localhost:5173/api/stations` (through the proxy, with the
+  body actually printed — `-o /dev/null` will happily hide this) rather than
+  only the direct port.
 - No `mosquitto` binary and no live Postgres/TimescaleDB *outside containers*
   in this environment, which is why the test suite still uses an embedded
   `amqtt` broker for MQTT tests and a fake connection for the TimescaleDB
@@ -197,7 +209,12 @@ stopped growing while every container still read `Up`. Both subscribers now
 subscribe in `on_connect`;
 `test_subscriber_resubscribes_after_a_broker_restart` and its safety-topic twin
 restart a real embedded broker mid-test to keep it that way. Re-verified end to
-end afterwards: rows resume within ~45 s of a broker restart, unattended.
+end afterwards: rows resume unattended. **Timing scales with outage length** —
+a fast `docker compose restart mosquitto` recovers in ~45 s, but a deliberate
+5-minute `stop`/`start` outage took ~2.5 minutes to resume and still looked
+frozen at the 60-second mark. That is paho's exponential reconnect backoff
+(doubling to a 120 s ceiling), not a second bug. Wait out the ceiling before
+concluding a reconnect has failed.
 
 ## Judge-facing artifacts
 

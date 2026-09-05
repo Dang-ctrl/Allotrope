@@ -37,7 +37,7 @@ by the exact SQL the provisioned Grafana dashboard uses.
 | The compose file's service wiring | **run for real**: `docker compose ps` after several minutes shows all seven containers still `Up`, no crash loop |
 | The web API (`allotrope/api`) | **run for real**: `/api/stations`, `/api/health` (mqtt and grpc true for both stations), `/api/stations/{id}/telemetry/history` and the `/ws/stations/{id}` feed all serving live data from the running stack |
 | The operator UI (`webapp/frontend`) | **run for real** in a browser against the live stack: both stations, live KPIs, per-genset wet-stack deposit, per-pack battery SoC, history charts, and real safety interventions in the feed |
-| Recovery from a broker restart | **run for real**: `docker compose restart mosquitto`, rows resume in `telemetry` within ~45 s unattended, and the UI's disconnect banner appears and then clears on its own |
+| Recovery from a broker restart | **run for real**, twice: a fast `docker compose restart mosquitto` resumes rows in ~45 s; a 5-minute `stop`/`start` outage took ~2.5 min to resume (paho's reconnect backoff doubles to a 120 s ceiling). Unattended in both cases, and the UI's disconnect banner appears during the outage and clears on its own after |
 
 Two real bugs were caught only by actually starting the containers, not by
 `docker compose config` or by anything in the test suite: `protobuf` (needed by
