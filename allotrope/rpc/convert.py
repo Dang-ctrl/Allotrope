@@ -76,10 +76,28 @@ def observation_to_proto(obs: dict) -> pb.Observation:
     )
 
 
+def observation_to_dict(obs: pb.Observation) -> dict:
+    return {
+        "electrical_load_kw": obs.electrical_load_kw,
+        "critical_load_kw": obs.critical_load_kw,
+        "firm_thermal_kw": obs.firm_thermal_kw,
+        "pv_available_kw": obs.pv_available_kw,
+        "wind_available_kw": obs.wind_available_kw,
+        "air_temp_c": obs.air_temp_c,
+        "wind_speed_ms": obs.wind_speed_ms,
+        "indoor_temp_c": obs.indoor_temp_c,
+        "genset_online": list(obs.genset_online),
+        "genset_power_kw": list(obs.genset_power_kw),
+        "genset_deposit": list(obs.genset_deposit),
+        "battery_soc": list(obs.battery_soc),
+    }
+
+
 __all__ = [
     "command_to_proto",
     "command_from_proto",
     "telemetry_to_proto",
     "safety_report_to_proto",
     "observation_to_proto",
+    "observation_to_dict",
 ]

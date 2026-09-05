@@ -13,3 +13,8 @@ data/generated/
 *.pptx
 checkpoints/
 *.pt
+
+# the web frontend's toolchain (webapp/frontend)
+node_modules/
+dist/
+*.tsbuildinfo

@@ -8,7 +8,7 @@ For the current working state (environment, next steps, open questions) see
 [../context.md](../context.md). For where every number came from see
 [calibration.md](calibration.md).
 
-**Last updated:** 2026-09-05, end of Phase 5.
+**Last updated:** 2026-09-05, end of Phase 6 (the operator UI).
 
 ---
 
@@ -93,6 +93,7 @@ on station.
 | 3 | The agents — DQN + SDDPG, training, checkpointing, federated averaging | **done** |
 | 4 | The twin — OpenDSS network, Volt-VAr / Volt-Watt fallback | **done** |
 | 5 | The system — gRPC actuation, MQTT telemetry, TimescaleDB, Grafana, containers | **done, container stack run end to end — see §11** |
+| 6 | The operator UI — read-only web API and a React/Astryx dashboard over the live stack | **done, run against the live stack — see §13** |
 
 Phases 3–5 were built in one autonomous session (2026-09-05) at the user's
 request, without further confirmation between steps; the container stack was
@@ -646,10 +647,20 @@ rather than silently dropped.
   container stack has been run for real: all six services up, real telemetry
   flowing plant-to-database, Grafana's datasource and dashboard confirmed
   loaded and queryable. Two real missing dependencies (`protobuf`, `psycopg`)
-  were found and fixed in the process — see §11. Still not claimed: the
-  dashboard's panels rendering correctly in a browser (only their underlying
-  queries were checked), and running a trained checkpoint inside a container
-  rather than the rule-based fallback.
+  were found and fixed in the process — see §11. Grafana's panels have since
+  been confirmed rendering real moving data in a browser, not merely queried.
+  Still not claimed: running a trained checkpoint inside a container rather
+  than the rule-based fallback — every container run so far has used
+  `EfficientRuleBased`.
+- **Not a UI proven against anything but a healthy local stack.** The operator
+  UI (§13) has been driven in a browser against the live containers — both
+  stations, live telemetry, per-genset deposit, real safety interventions, and
+  recovery after a deliberate broker restart. It has not been tested over a
+  constrained satellite-like link, with more than one concurrent viewer, on a
+  screen that is not this laptop's, or against a station whose config it has
+  never seen. It is also unauthenticated: anyone who can reach the port can
+  read the station's telemetry, which is acceptable for a demo on a laptop and
+  would not be at a real station.
 - **Single-station results, not a general claim about learned control at any
   polar station.** Two stations, two independently-trained checkpoints, each
   beating its own `EfficientRuleBased` baseline on fuel but by different
@@ -657,7 +668,80 @@ rather than silently dropped.
   works at the two stations this project models, not evidence it generalises
   to a station this model has not seen.
 
-## 13. Maintenance
+## 13. The operator UI
+
+The deck promises an operator HMI. Grafana satisfies that for an engineer
+reading time series, but it cannot show the two things this project is
+actually about — per-genset wet-stacking state, and the safety layer visibly
+intervening — because neither reaches TimescaleDB. Wet-stacking deposit and
+per-genset commitment exist only on gRPC `Observe`; safety reports exist only
+on their MQTT topic, and are published only when an intervention actually
+happens. So the UI is a second surface over the same stack, not a replacement:
+Grafana stays exactly as it was.
+
+**The API** (`allotrope/api/`, FastAPI, one container on port 8000). It is
+**read-only by construction**: it never calls `Dispatch`, because `Dispatch`
+calls `plant.step` (see `allotrope/rpc/server.py`) and the station service
+already drives that loop — a second caller would double-step the plant. It
+reads three sources, each for what only it has:
+
+| Source | What only it carries |
+|---|---|
+| gRPC `Observe`, polled ~1.5 s | per-genset `genset_online` / `genset_power_kw` / `genset_deposit`, per-pack `battery_soc` |
+| MQTT `telemetry` | fuel, black carbon, curtailment, critical-unserved — nothing else exposes these live |
+| MQTT `safety` | `Intervention` values, event-driven, no heartbeat |
+| TimescaleDB `telemetry` | history, for the charts |
+
+Routes: `GET /api/stations[/{id}]` (station YAML, projected),
+`GET /api/stations/{id}/telemetry/history|latest`, `WS /ws/stations/{id}`
+(snapshot on connect, then `telemetry` / `observation` / `safety` messages),
+and `GET /api/health` for on-stage troubleshooting.
+
+**The UI** (`webapp/frontend/`, React 19 + Meta's Astryx design system, Vite).
+Station switcher, KPI row (fuel, black carbon, genset output, and
+critical-unserved as a green/red stat that mirrors Grafana's own framing), a
+genset grid showing each set's deposit against its wet-stack and burn-off
+thresholds, per-pack battery gauges (LFP core and LTO exterior shown
+separately, since their thermal envelopes differ), history charts, and a live
+safety-intervention feed.
+
+Deliberately **not containerised**: it runs from `npm run dev`, with Vite
+proxying `/api` and `/ws` to the API container. A demo should not be able to
+lose an hour to an image build, and the proxy means no CORS configuration
+exists on either side.
+
+### The bug this found
+
+Building the live feed surfaced a real defect in code that had been passing
+tests since Phase 5. `TelemetrySubscriber` subscribed to its topics once, in
+`__init__`, rather than in an `on_connect` callback. paho reconnects to a
+restarted broker on its own — but a reconnect opens a *fresh MQTT session*,
+which carries no subscriptions, and paho does not restore them. So after any
+broker restart the transport reconnected, the client looked healthy, and no
+message was ever delivered again. Silently, permanently.
+
+Observed for real: `docker compose restart mosquitto`, and the `telemetry`
+table simply stopped growing while every container still read `Up`. Both
+subscribers now subscribe in `on_connect`, so it happens on the initial
+connect and every reconnect alike;
+`test_subscriber_resubscribes_after_a_broker_restart` (and its safety-topic
+twin) restart a real embedded broker mid-test and assert delivery resumes.
+Verified end to end afterwards, twice, and the two runs do not agree on
+timing — which is the useful part. A fast `docker compose restart mosquitto`
+recovers in ~45 s. A deliberate ~5-minute outage (`stop`, wait, `start`) took
+about **2.5 minutes** to resume after the broker was back, and looked like a
+failure at the 60-second mark. That is not a second bug: paho doubles its
+reconnect delay on each failed attempt up to a 120 s ceiling, so by the time a
+long-dead broker returns, the client may be most of the way through a two
+minute sleep. Recovery is unattended either way; **how long it takes scales
+with how long the broker was gone**, and anyone testing this should wait out
+the 120 s ceiling before concluding it is stuck.
+
+Worth recording for the same reason as the projection layer's pairwise-vs-joint
+bug in §6: it passed every test that existed, because no test had ever taken
+the broker away and given it back.
+
+## 14. Maintenance
 
 Update this document whenever the architecture, parameters, results, roadmap or
 claims change. Update [../context.md](../context.md) at the end of any session
