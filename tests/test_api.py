@@ -9,6 +9,8 @@ divergent implementation of it.
 
 from __future__ import annotations
 
+import time
+
 from fastapi.testclient import TestClient
 
 from allotrope.api.app import create_app
@@ -211,3 +213,34 @@ def test_telemetry_last_is_capped():
     resp = client.get(f"/stations/maitri/telemetry?last={MAX_TELEMETRY_LAST + 1_000_000}")
     assert resp.status_code == 200
     assert len(resp.json()) <= 3
+
+
+# -- rate limiting (part of the DDoS/resource-exhaustion findings) ------------
+
+
+def test_a_burst_past_the_limit_is_rejected_with_429():
+    app = create_app(api_key=TEST_API_KEY, rate_limit_requests=5, rate_limit_window_s=10.0)
+    client = TestClient(app)
+    for _ in range(5):
+        assert client.get("/stations").status_code == 200
+    limited = client.get("/stations")
+    assert limited.status_code == 429
+
+
+def test_the_limit_resets_after_the_window_elapses():
+    app = create_app(api_key=TEST_API_KEY, rate_limit_requests=3, rate_limit_window_s=0.2)
+    client = TestClient(app)
+    for _ in range(3):
+        assert client.get("/stations").status_code == 200
+    assert client.get("/stations").status_code == 429
+
+    time.sleep(0.25)
+    assert client.get("/stations").status_code == 200
+
+
+def test_health_endpoint_is_exempt_from_the_rate_limit():
+    """An orchestrator's own liveness probe must never trip a client's limit."""
+    app = create_app(api_key=TEST_API_KEY, rate_limit_requests=2, rate_limit_window_s=10.0)
+    client = TestClient(app)
+    for _ in range(10):
+        assert client.get("/health").status_code == 200

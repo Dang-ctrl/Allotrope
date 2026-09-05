@@ -31,6 +31,19 @@ module docstring for why gating every read the same way would just move
 the credential into the frontend bundle. The frontend reads its copy of
 the key from `VITE_API_KEY` (`frontend/.env.example`).
 
+## Rate limiting
+
+Also from the audit: no endpoint had any concurrency or rate limit, so any
+client could flood any of them -- `/simulation/step` particularly, since it
+does real per-request CPU work. Every request (except `/health`, so an
+orchestrator's own liveness probe can never trip a client's own limit) now
+counts against a per-client-IP sliding window, `DEFAULT_RATE_LIMIT_REQUESTS`
+(120) per `DEFAULT_RATE_LIMIT_WINDOW_S` (10s), returning `429` past it. This
+is an in-process, single-instance limiter -- it protects this process's own
+CPU/memory from a naive per-client flood, not a substitute for a real
+volumetric-DDoS defense at the network/infrastructure layer, which no
+amount of application code can provide on its own.
+
 ## What's here
 
 One `StationSimulation` per configured station (`maitri`, `bharati`) lives

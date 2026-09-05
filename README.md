@@ -71,7 +71,7 @@ run surfaced.
 | Gymnasium environment and reward | done |
 | Branching DQN (commitment) + SDDPG (dispatch), safety-integrated | implemented and tested; see [docs/reinforcement-learning.md](docs/reinforcement-learning.md) |
 | Local experiment tracking (`allotrope/experiment.py`, `runs/`) | done |
-| Backend API over the live simulation — see [docs/api.md](docs/api.md) | implemented and tested; the live default controller is still rule-based, not a trained checkpoint (`allotrope.api.simulation.default_controller`); simulation-control endpoints now require an API key (found unauthenticated in this project's own adversarial audit) — read endpoints stay open by design |
+| Backend API over the live simulation — see [docs/api.md](docs/api.md) | implemented and tested; the live default controller is still rule-based, not a trained checkpoint (`allotrope.api.simulation.default_controller`); simulation-control endpoints now require an API key and every endpoint (except `/health`) is rate-limited per client (found unauthenticated and unlimited in this project's own adversarial audit) — read endpoints stay unauthenticated by design |
 | Scenario benchmark across many seeds — see [docs/evaluation.md](docs/evaluation.md) | implemented for weather/demand variation; asset-failure and sensor-fault scenarios not yet built |
 | Structured logging — see [docs/observability.md](docs/observability.md) | implemented for the API/simulation loop; training/evaluation CLIs and a metrics endpoint not yet wired |
 | Frontend Command Center — see [frontend/README.md](frontend/README.md) | one real screen against live API data; no browser/E2E test tool was available to verify it visually, only build/type-check/component tests and manual curl checks against a live server pair |

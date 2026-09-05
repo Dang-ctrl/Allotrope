@@ -47,10 +47,12 @@ import logging
 import os
 import secrets
 import time
+from collections import defaultdict, deque
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from allotrope.config import available_stations, load_station
@@ -64,7 +66,47 @@ MAX_TELEMETRY_LAST = 10_000
 single request can force serialisation of the entire in-memory telemetry
 buffer, a cheap and repeatable memory/CPU amplification."""
 
+DEFAULT_RATE_LIMIT_REQUESTS = 120
+DEFAULT_RATE_LIMIT_WINDOW_S = 10.0
+"""Found in this project's own adversarial audit: no endpoint had any
+concurrency or rate limit at all, so a client could flood any of them --
+particularly `/simulation/step`, which does real per-request CPU work.
+120 requests / 10s per client is generous for a single operator or the
+frontend's poll loop, and small enough to blunt a naive flood."""
+
 _logger = logging.getLogger("allotrope.api")
+
+
+class RateLimiter:
+    """A plain sliding-window counter per client IP, in-process.
+
+    Not a substitute for a real edge/infrastructure rate limiter (an
+    actual volumetric flood needs blocking upstream of this process, not
+    inside it -- this only protects one process's own CPU/memory from a
+    naive per-client flood, which is the gap this project's audit actually
+    found: zero limiting of any kind). State is per-`RateLimiter` instance
+    (one per `create_app()` call), so tests get isolated state rather than
+    sharing a global counter across every app built in the same process.
+    """
+
+    def __init__(self, max_requests: int, window_s: float) -> None:
+        self.max_requests = max_requests
+        self.window_s = window_s
+        self._hits: dict[str, deque[float]] = defaultdict(deque)
+
+    def allow(self, client_key: str) -> bool:
+        now = time.monotonic()
+        hits = self._hits[client_key]
+        while hits and now - hits[0] > self.window_s:
+            hits.popleft()
+        if len(hits) >= self.max_requests:
+            return False
+        hits.append(now)
+        return True
+
+
+def _too_many_requests_response() -> JSONResponse:
+    return JSONResponse(status_code=429, content={"detail": "rate limit exceeded"})
 
 
 class SimulationManager:
@@ -117,10 +159,16 @@ class StartRequest(BaseModel):
     interval_s: float = Field(default=DEFAULT_STEP_INTERVAL_S, gt=0.0, le=60.0)
 
 
-def create_app(api_key: str | None = None) -> FastAPI:
+def create_app(
+    api_key: str | None = None,
+    rate_limit_requests: int = DEFAULT_RATE_LIMIT_REQUESTS,
+    rate_limit_window_s: float = DEFAULT_RATE_LIMIT_WINDOW_S,
+) -> FastAPI:
     """Build the app. `api_key` is exposed as a parameter (rather than only
     read from the environment) so tests can construct an app with a known
-    key without setting process-wide environment state."""
+    key without setting process-wide environment state; the rate-limit
+    parameters exist so tests can use a small window instead of waiting
+    out the real one."""
     app = FastAPI(
         title="Allotrope",
         description=(
@@ -138,6 +186,17 @@ def create_app(api_key: str | None = None) -> FastAPI:
     manager = SimulationManager()
     app.state.manager = manager
     app.state.started_at = time.monotonic()
+    rate_limiter = RateLimiter(rate_limit_requests, rate_limit_window_s)
+
+    @app.middleware("http")
+    async def rate_limit(request: Request, call_next):
+        # /health excluded: an orchestrator's own liveness probe hitting
+        # it repeatedly must never be the thing that trips a client's limit.
+        if request.url.path != "/health":
+            client_key = request.client.host if request.client else "unknown"
+            if not rate_limiter.allow(client_key):
+                return _too_many_requests_response()
+        return await call_next(request)
 
     app.state.api_key = api_key or os.environ.get("ALLOTROPE_API_KEY")
     if not app.state.api_key:
