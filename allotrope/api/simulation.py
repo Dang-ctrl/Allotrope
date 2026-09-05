@@ -93,7 +93,14 @@ class StationSimulation:
             record = _flatten(telemetry)
             report = getattr(self.controller, "last_report", None)
             fallback_reason = getattr(self.controller, "last_fallback_reason", None)
-            record["safety"] = report
+            # .as_dict() (not the raw dataclass) so this matches exactly what
+            # /stations/{id}/safety serves via the same accessor -- storing
+            # the dataclass here let FastAPI's default dataclass encoder take
+            # over instead, which keeps `detail` nested rather than spread
+            # into the report the way .as_dict() documents it, so the same
+            # SafetyReport silently had two different wire shapes depending
+            # on which endpoint served it.
+            record["safety"] = report.as_dict() if report is not None else None
             record["fallback_reason"] = fallback_reason
             self.history.append(record)
             self.step_count += 1

@@ -133,7 +133,10 @@ export interface TelemetryRecord {
   timestamp: string;
   genset_kw: number;
   electrical_load_kw: number;
-  critical_load_kw: number;
+  // Not a top-level field on the wire -- critical_load_kw only exists
+  // nested under safety.critical_load_kw (allotrope/safety/projection.py's
+  // SafetyProjection.project() records it into every SafetyReport.detail,
+  // unconditionally, every step). Read it from there.
   renewable_used_kw: number;
   curtailed_kw: number;
   unserved_kw: number;
