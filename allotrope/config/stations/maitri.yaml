@@ -141,28 +141,33 @@ loads:
     service_hot_water_kw: 8.0        # [assumed]
     deferrable_fraction: 1.0         # snow melt is fully shiftable within a day
 
-network:
-  # A minimal radial LV feeder off the genset bus, used by the OpenDSS twin for
-  # Volt-VAr / Volt-Watt inverter control. There is no public wiring diagram for
-  # either station, so topology and impedances are [assumed] -- chosen to be a
-  # plausible LV microgrid feeder, not a survey of the real one.
-  base_kv: 0.4
-  feeder_r1_ohm_per_km: 0.30   # [assumed] typical 0.4 kV LV cable
-  feeder_x1_ohm_per_km: 0.08   # [assumed]
-  branches:
-    # length_km sets how electrically "far" each bus sits from the genset bus,
-    # which is what makes voltage rise/droop at that bus meaningful at all.
-    pv: {length_km: 0.10}
-    wind: {length_km: 0.15}
-    bess_heated_core: {length_km: 0.03}
-    bess_exterior: {length_km: 0.08}
-    load_critical: {length_km: 0.05}
-    load_general: {length_km: 0.07}
-    load_melt: {length_km: 0.06}
-
 criticality:
   # The safety-projection layer treats these as inviolable. They are the reason
   # a learned policy alone is not acceptable at -40 C.
   life_support_kw: 45.0              # [assumed] equals `loads.electrical.fixed_kw`
   min_indoor_temp_c: 16.0            # [assumed] hard floor, below setpoint
   reserve_margin_kw: 20.0            # [assumed] spinning reserve above net demand
+
+# A single-feeder radial LV network, for the inverter-level Volt-Watt safety
+# layer (allotrope.safety.voltage). Entirely [assumed] -- a plausible small
+# station layout, not a measured one -- and optional: allotrope.config
+# treats a station with no `network:` section as having no network model at
+# all (StationConfig.network is None), which is Bharati's current state.
+# Cable lengths/gauges here are notional; what matters for the voltage
+# behaviour this layer reacts to is the resulting per-line R/X, not how
+# those numbers were arrived at.
+network:
+  base_kv: 0.4                       # [assumed] three-phase LV feeder, typical for a station microgrid
+  source_bus: plant                  # gensets and storage connect here; held at the network's 1.0 pu reference
+  buses:
+    - id: plant
+    - id: renewables                 # PV + wind inverters
+    - id: load                       # electrical load
+  lines:
+    # A generation-side run with more headroom for reactive support than
+    # resistance, since inverter overvoltage is the failure mode this layer
+    # exists to catch.
+    - {from: plant, to: renewables, r_ohm: 0.05, x_ohm: 0.02}   # [assumed] ~150 m LV cable
+    - {from: plant, to: load, r_ohm: 0.08, x_ohm: 0.03}         # [assumed] ~250 m LV cable
+  v_min_pu: 0.94                     # [assumed] ANSI C84.1-style service-voltage floor
+  v_max_pu: 1.06                     # [assumed] matches the IEEE 1547-2018 Volt-Watt curve's V2

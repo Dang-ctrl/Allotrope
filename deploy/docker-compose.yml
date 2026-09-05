@@ -1,11 +1,13 @@
-# The full stack the deck describes: MQTT for telemetry, TimescaleDB for
-# storage, Grafana for the HMI, and one container per station running its
-# actuation server + controller loop.
+# The full stack: MQTT for telemetry, TimescaleDB for storage, Grafana for
+# the HMI, and one container per station running its plant + guarded
+# controller loop in-process (see docs/control-plane.md for why there is no
+# remote command-injection path here -- the gRPC control plane distributes
+# state, it does not drive actuation).
 #
 # Not exercised end to end in the development sandbox this project was built
 # in -- that environment has the Docker CLI but no running daemon. Every piece
 # that does not require an actual container runtime (MQTT pub/sub, the
-# TimescaleDB bridge's SQL, the gRPC actuation path) is unit- and
+# TimescaleDB bridge's SQL, the gRPC control plane) is unit- and
 # integration-tested under tests/; this compose file is the infrastructure
 # that wires the same, already-tested Python together for a real deployment.
 #

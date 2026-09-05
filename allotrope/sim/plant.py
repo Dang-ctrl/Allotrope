@@ -49,6 +49,16 @@ class DispatchCommand:
     """Per unit, positive to discharge to the bus and negative to charge."""
     snow_melt_kw: float
     """Requested melting rate. The deferrable sink, and the burn-off dump load."""
+    renewable_limit_kw: float | None = None
+    """A ceiling on combined PV+wind injection this step, or None for no ceiling.
+
+    This is the inverter-level Volt-Watt curtailment lever
+    (`allotrope.safety.voltage.VoltWattCurve`): the point-of-interconnection
+    real-power limit an inverter would enforce to hold bus voltage inside its
+    ride-through band. No other part of the plant sets this field -- it
+    exists so a layer downstream of the analytic safety projection can act on
+    a network voltage solve the projection itself has no model of.
+    """
 
     @classmethod
     def all_off(cls, cfg: StationConfig) -> DispatchCommand:
@@ -150,8 +160,20 @@ class PolarMicrogrid:
     # -- observation -------------------------------------------------------
 
     def observe(self) -> dict[str, Any]:
-        """The plant's externally visible condition, before this step is dispatched."""
+        """The plant's externally visible condition, before this step is dispatched.
+
+        Battery temperature is re-derated against *this* step's ambient/indoor
+        reading before the envelope is reported, exactly as `step()` will do
+        before it executes -- not the reading left over from the previous
+        step. Reporting the stale figure understates how far a cold snap has
+        already cut a pack's capability by the time a command computed from
+        this observation is executed, which is exactly the gap a safety
+        projection using every last watt of reported headroom can fall
+        through.
+        """
         i = min(self.state.step_index, self.n_steps - 1)
+        for battery in self.batteries:
+            battery.set_temperature(float(self.climate.air_temp_c[i]), self.state.indoor_temp_c)
         return {
             "timestamp": self.index[i],
             "electrical_load_kw": float(self.loads.electrical_kw[i]),
@@ -169,8 +191,8 @@ class PolarMicrogrid:
             "genset_can_start": [g.can_start for g in self.gensets],
             "genset_can_stop": [g.can_stop for g in self.gensets],
             "battery_soc": [b.state.soc for b in self.batteries],
-            "battery_max_charge_kw": [b.max_charge_kw() for b in self.batteries],
-            "battery_max_discharge_kw": [b.max_discharge_kw() for b in self.batteries],
+            "battery_max_charge_kw": [b.max_charge_kw(self.dt_h) for b in self.batteries],
+            "battery_max_discharge_kw": [b.max_discharge_kw(self.dt_h) for b in self.batteries],
         }
 
     # -- dispatch ----------------------------------------------------------
@@ -200,6 +222,11 @@ class PolarMicrogrid:
         #    committed sets are actually worked.
         electrical_load_kw = float(self.loads.electrical_kw[i])
         renewable_available_kw = float(self.pv_available_kw[i] + self.wind_available_kw[i])
+        voltage_curtailed_kw = 0.0
+        if command.renewable_limit_kw is not None:
+            limited_kw = min(renewable_available_kw, max(command.renewable_limit_kw, 0.0))
+            voltage_curtailed_kw = renewable_available_kw - limited_kw
+            renewable_available_kw = limited_kw
         battery_kw = [
             b.step(float(p), dt) for b, p in zip(self.batteries, command.battery_kw)
         ]
@@ -324,6 +351,7 @@ class PolarMicrogrid:
             "wind_available_kw": float(self.wind_available_kw[i]),
             "renewable_used_kw": renewable_used_kw,
             "curtailed_kw": curtailed_kw,
+            "voltage_curtailed_kw": voltage_curtailed_kw,
             "battery_kw": battery_kw,
             "battery_soc": [b.state.soc for b in self.batteries],
             "electrical_load_kw": electrical_load_kw,

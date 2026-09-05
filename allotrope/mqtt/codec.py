@@ -1,11 +1,13 @@
 """JSON encoding for the telemetry link.
 
-Only telemetry crosses MQTT in this design -- commands travel over the gRPC
-actuation path (`allotrope.rpc`), which carries the sub-10ms control budget and
-the safety projection. MQTT here plays the role the deck assigns it: the
-low-bandwidth, high-latency-tolerant channel a station's 4 MHz satellite link
-actually is, carrying monitoring data and (in `allotrope.agents.federated`)
-model weights, never raw control commands.
+Only telemetry crosses MQTT in this design -- there is no remote command path
+in this project at all (see `docs/control-plane.md`'s "what's explicitly not
+implemented": the controller and the plant it commands stay in the same
+process, since computing a command needs the full plant object). MQTT here
+plays the role the deck assigns it: the low-bandwidth, high-latency-tolerant
+channel a station's 4 MHz satellite link actually is, carrying monitoring
+data and (in `allotrope.federated`) model weights, never raw control
+commands.
 
 Decoding is defensive on principle: a payload arriving over a satellite link,
 possibly corrupted or from a mismatched software version, must not raise an

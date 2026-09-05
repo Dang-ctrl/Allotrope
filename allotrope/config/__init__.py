@@ -188,23 +188,50 @@ class ThermalLoadSpec:
 
 
 @dataclass(frozen=True)
-class NetworkBranch:
-    length_km: float
-
-
-@dataclass(frozen=True)
-class NetworkSpec:
-    base_kv: float
-    feeder_r1_ohm_per_km: float
-    feeder_x1_ohm_per_km: float
-    branches: dict[str, NetworkBranch]
-
-
-@dataclass(frozen=True)
 class Criticality:
     life_support_kw: float
     min_indoor_temp_c: float
     reserve_margin_kw: float
+
+
+@dataclass(frozen=True)
+class NetworkBus:
+    id: str
+
+
+@dataclass(frozen=True)
+class NetworkLine:
+    from_bus: str
+    to_bus: str
+    r_ohm: float
+    """Positive-sequence resistance for the whole line, not per unit length."""
+    x_ohm: float
+    """Positive-sequence reactance for the whole line, not per unit length."""
+
+
+@dataclass(frozen=True)
+class NetworkConfig:
+    """A single-feeder radial LV network, for `allotrope.sim.network.DistributionNetwork`.
+
+    Optional: a station with no `network:` section in its YAML has no
+    electrical-network model, and every consumer of `StationConfig.network`
+    must treat `None` as "not configured" rather than assuming a network
+    exists. This is deliberately synthetic like every other station
+    parameter -- see the station YAML's own `src` tags -- calibrated to be
+    a plausible small LV feeder, not a measured one.
+    """
+
+    base_kv: float
+    """Nominal three-phase line-to-line voltage, kV."""
+    source_bus: str
+    """The bus the plant's aggregate generation and storage connect to; held at 1.0 pu."""
+    buses: tuple[NetworkBus, ...]
+    lines: tuple[NetworkLine, ...]
+    v_min_pu: float
+    v_max_pu: float
+
+    def bus_ids(self) -> tuple[str, ...]:
+        return tuple(b.id for b in self.buses)
 
 
 @dataclass(frozen=True)
@@ -219,7 +246,7 @@ class StationConfig:
     electrical: ElectricalLoadSpec
     thermal: ThermalLoadSpec
     criticality: Criticality
-    network: NetworkSpec | None = None
+    network: NetworkConfig | None = None
     fuel_budget: dict[str, Any] = field(default_factory=dict)
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
@@ -266,19 +293,44 @@ class StationConfig:
             raise ConfigError("life-support demand exceeds total installed generation")
         if not self.wind.cut_in_ms < self.wind.rated_ms < self.wind.cut_out_ms:
             raise ConfigError("wind turbine speeds must satisfy cut_in < rated < cut_out")
+        if self.network is not None:
+            net = self.network
+            bus_ids = net.bus_ids()
+            if len(bus_ids) != len(set(bus_ids)):
+                raise ConfigError("network: bus ids must be unique")
+            if net.source_bus not in bus_ids:
+                raise ConfigError(f"network: source_bus {net.source_bus!r} is not a declared bus")
+            for line in net.lines:
+                if line.from_bus not in bus_ids or line.to_bus not in bus_ids:
+                    raise ConfigError(
+                        f"network: line {line.from_bus}->{line.to_bus} references an undeclared bus"
+                    )
+                if line.r_ohm <= 0.0 and line.x_ohm <= 0.0:
+                    raise ConfigError(
+                        f"network: line {line.from_bus}->{line.to_bus} has zero impedance"
+                    )
+            if not 0.0 < net.v_min_pu < 1.0 < net.v_max_pu:
+                raise ConfigError("network: require 0 < v_min_pu < 1.0 < v_max_pu")
+            if net.base_kv <= 0.0:
+                raise ConfigError("network: base_kv must be positive")
 
 
-def _build_network(data: dict[str, Any] | None) -> NetworkSpec | None:
-    if data is None:
-        return None
-    return NetworkSpec(
-        base_kv=float(data["base_kv"]),
-        feeder_r1_ohm_per_km=float(data["feeder_r1_ohm_per_km"]),
-        feeder_x1_ohm_per_km=float(data["feeder_x1_ohm_per_km"]),
-        branches={
-            name: NetworkBranch(length_km=float(b["length_km"]))
-            for name, b in data["branches"].items()
-        },
+def _build_network(data: dict[str, Any]) -> NetworkConfig:
+    return NetworkConfig(
+        base_kv=float(_req(data, "base_kv", "network")),
+        source_bus=_req(data, "source_bus", "network"),
+        buses=tuple(NetworkBus(id=b["id"]) for b in _req(data, "buses", "network")),
+        lines=tuple(
+            NetworkLine(
+                from_bus=_req(line, "from", "network line"),
+                to_bus=_req(line, "to", "network line"),
+                r_ohm=float(_req(line, "r_ohm", "network line")),
+                x_ohm=float(_req(line, "x_ohm", "network line")),
+            )
+            for line in _req(data, "lines", "network")
+        ),
+        v_min_pu=float(data.get("v_min_pu", 0.94)),
+        v_max_pu=float(data.get("v_max_pu", 1.06)),
     )
 
 
@@ -307,7 +359,7 @@ def _build(data: dict[str, Any]) -> StationConfig:
         ),
         thermal=ThermalLoadSpec(**_req(_req(data, "loads", "root"), "thermal", "loads")),
         criticality=Criticality(**_req(data, "criticality", "root")),
-        network=_build_network(data.get("network")),
+        network=_build_network(data["network"]) if data.get("network") else None,
         fuel_budget=data.get("fuel_budget", {}),
         raw=data,
     )
@@ -337,6 +389,9 @@ __all__ = [
     "PVSpec",
     "WindSpec",
     "StorageSpec",
+    "NetworkBus",
+    "NetworkLine",
+    "NetworkConfig",
     "load_station",
     "available_stations",
 ]

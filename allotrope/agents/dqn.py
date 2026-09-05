@@ -1,125 +1,134 @@
-"""DQN for the discrete commitment layer: which gensets are turning.
+"""Branching DQN: which gensets to commit.
 
-With `n` gensets there are `2**n` commitment patterns -- 8 at Maitri or Bharati,
-both three-set plants -- small enough to enumerate rather than requiring a
-factored or autoregressive action representation. Each pattern is one output of
-a single Q-network, so this is plain DQN: no distributional head, no dueling
-architecture, no rainbow of extensions the problem does not need. The two-layer
-split with SDDPG is where this project's novelty is meant to live, not in the
-sophistication of either half.
+The commitment decision is binary per genset and there is no way to flatten
+`n` independent binaries into a single discrete action space without either
+enumerating `2**n` joint actions (intractable as the fleet grows) or losing
+the fact that these really are separate decisions. Action branching solves
+this the way `allotrope.envs.polar_microgrid` already frames the problem:
+one Q-head per genset, a shared trunk between them, and a joint target that
+lets the branches coordinate without an exponential action space.
+
+Double DQN target (evaluate the greedy action under the online network,
+value it under the target network) is used throughout, because an ordinary
+max-based target is a known source of overestimation bias that compounds
+across branches.
 """
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
-from itertools import product
 
 import numpy as np
 import torch
-from torch import nn, optim
+import torch.nn.functional as F
 
-from allotrope.agents.networks import QNetwork, soft_update
-from allotrope.agents.replay import Batch, ReplayBuffer
-
-
-def enumerate_commitments(n_gensets: int) -> list[tuple[bool, ...]]:
-    """Every commitment pattern, in a fixed, reproducible order."""
-    return list(product([False, True], repeat=n_gensets))
+from allotrope.agents.networks import DuelingBranchingQNetwork, hard_update, soft_update
 
 
-@dataclass(frozen=True)
+@dataclass
 class DQNConfig:
     hidden: int = 128
-    lr: float = 1e-3
     gamma: float = 0.99
+    lr: float = 3e-4
     tau: float = 0.005
-    epsilon_start: float = 1.0
-    epsilon_min: float = 0.05
-    epsilon_decay: float = 0.997
-    """Per-episode multiplicative decay of the exploration rate."""
-    buffer_capacity: int = 200_000
-    batch_size: int = 256
-    warmup_steps: int = 1_000
+    batch_size: int = 128
+    eps_start: float = 1.0
+    eps_end: float = 0.05
+    eps_decay_steps: int = 20_000
+    grad_clip: float = 10.0
+    seed: int = 0
 
 
-class DQNAgent:
-    """A Q-network over the enumerated commitment patterns."""
+class BranchingDQN:
+    """One binary Q-head per genset; epsilon-greedy exploration per branch."""
 
     def __init__(self, obs_dim: int, n_gensets: int, config: DQNConfig | None = None) -> None:
         self.obs_dim = obs_dim
         self.n_gensets = n_gensets
-        self.commitments = enumerate_commitments(n_gensets)
-        self.n_actions = len(self.commitments)
         self.cfg = config or DQNConfig()
 
-        self.q = QNetwork(obs_dim, self.n_actions, self.cfg.hidden)
-        self.q_target = QNetwork(obs_dim, self.n_actions, self.cfg.hidden)
-        self.q_target.load_state_dict(self.q.state_dict())
-        self.opt = optim.Adam(self.q.parameters(), lr=self.cfg.lr)
+        torch.manual_seed(self.cfg.seed)
+        self.online = DuelingBranchingQNetwork(obs_dim, n_gensets, 2, self.cfg.hidden)
+        self.target = copy.deepcopy(self.online)
+        hard_update(self.target, self.online)
+        self.optimizer = torch.optim.Adam(self.online.parameters(), lr=self.cfg.lr)
 
-        self.buffer = ReplayBuffer(self.cfg.buffer_capacity, obs_dim, 1)
-        self.epsilon = self.cfg.epsilon_start
-        self.total_steps = 0
+        self._rng = np.random.default_rng(self.cfg.seed)
+        self.train_steps = 0
+        self.env_steps = 0
+
+    # -- acting -------------------------------------------------------------
+
+    def epsilon(self) -> float:
+        frac = min(self.env_steps / max(self.cfg.eps_decay_steps, 1), 1.0)
+        return self.cfg.eps_start + frac * (self.cfg.eps_end - self.cfg.eps_start)
 
     @torch.no_grad()
-    def act(
-        self, obs: np.ndarray, explore: bool = True, rng: np.random.Generator | None = None
-    ) -> tuple[int, tuple[bool, ...]]:
-        """The chosen action index and the commitment pattern it names."""
-        rng = rng or np.random.default_rng()
-        if explore and (self.total_steps < self.cfg.warmup_steps or rng.random() < self.epsilon):
-            index = int(rng.integers(0, self.n_actions))
-        else:
-            x = torch.as_tensor(obs, dtype=torch.float32).unsqueeze(0)
-            index = int(self.q(x).argmax(dim=-1).item())
-        return index, self.commitments[index]
+    def act(self, obs: np.ndarray, deterministic: bool = False) -> np.ndarray:
+        """Return a length-`n_gensets` array of 0/1 commitment decisions."""
+        obs_t = torch.as_tensor(obs, dtype=torch.float32).unsqueeze(0)
+        q = self.online(obs_t).squeeze(0)  # (n_gensets, 2)
+        greedy = q.argmax(dim=-1).numpy().astype(np.float32)
 
-    def observe(
-        self, obs: np.ndarray, action_index: int, reward: float, next_obs: np.ndarray, done: bool
-    ) -> None:
-        self.buffer.add(obs, np.array([action_index], dtype=np.float32), reward, next_obs, done)
-        self.total_steps += 1
+        if deterministic:
+            self.env_steps += 1
+            return greedy
 
-    def end_episode(self) -> None:
-        self.epsilon = max(self.cfg.epsilon_min, self.epsilon * self.cfg.epsilon_decay)
+        eps = self.epsilon()
+        random_mask = self._rng.random(self.n_gensets) < eps
+        random_actions = self._rng.integers(0, 2, self.n_gensets).astype(np.float32)
+        self.env_steps += 1
+        return np.where(random_mask, random_actions, greedy)
 
-    def update(self, rng: np.random.Generator) -> dict[str, float] | None:
-        if len(self.buffer) < max(self.cfg.batch_size, self.cfg.warmup_steps):
-            return None
-        batch = self.buffer.sample(self.cfg.batch_size, rng)
-        return self._update(batch)
+    # -- learning -------------------------------------------------------------
 
-    def _update(self, batch: Batch) -> dict[str, float]:
-        obs = torch.as_tensor(batch.obs)
-        action = torch.as_tensor(batch.action, dtype=torch.long).squeeze(-1)
-        reward = torch.as_tensor(batch.reward)
-        next_obs = torch.as_tensor(batch.next_obs)
-        done = torch.as_tensor(batch.done)
+    def update(self, batch: dict[str, np.ndarray]) -> dict[str, float]:
+        obs = torch.as_tensor(batch["obs"], dtype=torch.float32)
+        next_obs = torch.as_tensor(batch["next_obs"], dtype=torch.float32)
+        actions = torch.as_tensor(batch["genset_on"], dtype=torch.long)  # (B, n_gensets)
+        reward = torch.as_tensor(batch["reward"], dtype=torch.float32)
+        done = torch.as_tensor(batch["done"], dtype=torch.float32)
+
+        q = self.online(obs)  # (B, n_gensets, 2)
+        q_taken = q.gather(-1, actions.unsqueeze(-1)).squeeze(-1)  # (B, n_gensets)
 
         with torch.no_grad():
-            # Double DQN: the online network picks the next action, the target
-            # network values it. Plain DQN's shared max is a well known source
-            # of overestimation, and it costs nothing extra to avoid here.
-            next_action = self.q(next_obs).argmax(dim=-1, keepdim=True)
-            next_q = self.q_target(next_obs).gather(-1, next_action).squeeze(-1)
-            y = reward + self.cfg.gamma * (1.0 - done) * next_q
+            online_next_q = self.online(next_obs)
+            greedy_next = online_next_q.argmax(dim=-1)  # (B, n_gensets)
+            target_next_q = self.target(next_obs)
+            next_q = target_next_q.gather(-1, greedy_next.unsqueeze(-1)).squeeze(-1)
+            # Branches share one scalar reward and coordinate through the mean
+            # branch value, following the action-branching architecture's
+            # target construction rather than n independent Bellman targets.
+            mean_next_q = next_q.mean(dim=-1, keepdim=True)
+            target = reward.unsqueeze(-1) + self.cfg.gamma * (1.0 - done.unsqueeze(-1)) * mean_next_q
+            target = target.expand_as(q_taken)
 
-        q = self.q(obs).gather(-1, action.unsqueeze(-1)).squeeze(-1)
-        loss = nn.functional.smooth_l1_loss(q, y)
-
-        self.opt.zero_grad()
+        loss = F.smooth_l1_loss(q_taken, target)
+        self.optimizer.zero_grad()
         loss.backward()
-        self.opt.step()
-        soft_update(self.q_target, self.q, self.cfg.tau)
+        torch.nn.utils.clip_grad_norm_(self.online.parameters(), self.cfg.grad_clip)
+        self.optimizer.step()
+        soft_update(self.target, self.online, self.cfg.tau)
+        self.train_steps += 1
+        return {"dqn_loss": float(loss.item()), "dqn_q_mean": float(q_taken.mean().item())}
 
-        return {"q_loss": float(loss.detach())}
+    # -- persistence ----------------------------------------------------------
 
     def state_dict(self) -> dict:
-        return {"q": self.q.state_dict()}
+        return {
+            "online": self.online.state_dict(),
+            "target": self.target.state_dict(),
+            "env_steps": self.env_steps,
+            "train_steps": self.train_steps,
+        }
 
     def load_state_dict(self, state: dict) -> None:
-        self.q.load_state_dict(state["q"])
-        self.q_target.load_state_dict(state["q"])
+        self.online.load_state_dict(state["online"])
+        self.target.load_state_dict(state["target"])
+        self.env_steps = state.get("env_steps", 0)
+        self.train_steps = state.get("train_steps", 0)
 
 
-__all__ = ["DQNAgent", "DQNConfig", "enumerate_commitments"]
+__all__ = ["BranchingDQN", "DQNConfig"]
