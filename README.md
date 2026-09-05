@@ -76,8 +76,8 @@ run surfaced.
 | Structured logging — see [docs/observability.md](docs/observability.md) | implemented for the API/simulation loop; training/evaluation CLIs and a metrics endpoint not yet wired |
 | Frontend Command Center — see [frontend/README.md](frontend/README.md) | one real screen against live API data; no browser/E2E test tool was available to verify it visually, only build/type-check/component tests and manual curl checks against a live server pair |
 | OpenDSS network twin + inverter-level Volt-Watt — see [docs/network-safety.md](docs/network-safety.md) | implemented and tested for Maitri (single-feeder, real OpenDSS power flow); Bharati has no network config yet; Volt-VAr not implemented (needs reactive-power modelling the plant doesn't have) |
-| Federated learning across stations | planned |
 | gRPC control plane — see [docs/control-plane.md](docs/control-plane.md) | implemented and tested (state distribution + heartbeat, real server/client, real robustness cases); no command-injection RPC by design, no MQTT (documented why), no TLS/auth |
+| Federated learning across stations — see [docs/federated-learning.md](docs/federated-learning.md) | real FedAvg over network tensors, validation + rollback, tested; run for a handful of rounds as a smoke test, not to convergence or a competitive claim |
 | Grafana HMI, containers | planned |
 
 ## Results so far
@@ -184,6 +184,7 @@ allotrope/
   observability.py  structured JSON logging, see docs/observability.md
   api/           FastAPI backend over the live simulation, see docs/api.md
   controlplane/  gRPC state distribution + heartbeat, see docs/control-plane.md
+  federated/     FedAvg across stations, validation + rollback, see docs/federated-learning.md
 frontend/        React/TypeScript Command Center UI over the API, see frontend/README.md
 docs/            calibration, reinforcement learning, and other design notes
 scripts/         entry points

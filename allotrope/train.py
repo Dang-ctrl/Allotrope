@@ -55,7 +55,18 @@ def train(
     warmup_steps: int,
     buffer_capacity: int,
     runs_dir: Path,
+    init_checkpoint: Path | None = None,
 ) -> Path:
+    """Train, optionally warm-started from an existing checkpoint's weights.
+
+    `init_checkpoint` is what `allotrope.federated` uses to start a
+    station's local round from the current global model rather than from
+    scratch -- a plain `dqn.load_state_dict`/`sddpg.load_state_dict` after
+    the usual random init, using the same `weights_only=True` loading
+    `allotrope.evaluate.load_checkpoint` uses. `None` (the default)
+    reproduces this function's exact prior behaviour: every existing
+    caller is unaffected.
+    """
     torch.manual_seed(seed)
     rng = np.random.default_rng(seed)
 
@@ -64,6 +75,10 @@ def train(
         cfg, apply_safety=True, episode_steps=episode_steps, randomise_start=True, seed=seed
     )
     dqn, sddpg = build_agents(env, seed)
+    if init_checkpoint is not None:
+        state = torch.load(init_checkpoint, map_location="cpu", weights_only=True)
+        dqn.load_state_dict(state["dqn"])
+        sddpg.load_state_dict(state["sddpg"])
     update_dqn = agent_kind in ("dqn", "hybrid")
     update_sddpg = agent_kind in ("sddpg", "hybrid")
 
@@ -161,6 +176,9 @@ def main() -> None:
     parser.add_argument("--buffer-capacity", type=int, default=50_000)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--runs-dir", default="runs")
+    parser.add_argument(
+        "--init-checkpoint", default=None, help="warm-start from this checkpoint's weights"
+    )
     args = parser.parse_args()
 
     train(
@@ -172,6 +190,7 @@ def main() -> None:
         warmup_steps=args.warmup_steps,
         buffer_capacity=args.buffer_capacity,
         runs_dir=Path(args.runs_dir),
+        init_checkpoint=Path(args.init_checkpoint) if args.init_checkpoint else None,
     )
 
 
