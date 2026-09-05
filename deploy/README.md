@@ -19,10 +19,26 @@ Then:
 
 ## What is proven where
 
-This compose stack was written and reasoned through in a sandboxed development
-environment with the Docker **CLI** present but no running daemon --
-`docker compose up` has not been executed against it end to end. That is stated
-plainly rather than glossed over, and it is also why the project's test suite
+This stack has now been tried against two different sandboxes, and each
+found a different, real reason it isn't fully verified end to end yet --
+recorded honestly rather than collapsed into one vague "not tested":
+
+- **First environment**: Docker CLI present, daemon not running at all
+  (`docker info` failed to reach the socket). Nothing beyond
+  `docker compose config` could be tried.
+- **This environment**: the daemon actually starts and runs (`dockerd`,
+  confirmed via `docker info` reporting a real server). `docker compose
+  build` gets further -- it reaches Docker Hub for the `python:3.11-slim`
+  base image -- but the registry pull redirects to a signed
+  `production.cloudfront.docker.com` blob URL, and this sandbox's network
+  egress policy returns a 403 to that specific host (confirmed via the
+  proxy's own status endpoint reporting a `connect_rejected` /
+  `policy_denial` on it, not a transient failure). Per this environment's
+  own guidance, a 403 from a network policy is reported, not routed around
+  with a mirror or a different base image chosen just to dodge it.
+
+Both are real, environment-specific network/infrastructure limits, not
+gaps in the code being deployed -- which is why the project's test suite
 does not depend on this file at all:
 
 | Piece | How it is actually verified |
@@ -30,13 +46,16 @@ does not depend on this file at all:
 | MQTT publish/subscribe, malformed-payload handling | `tests/test_mqtt.py`, against a real embedded MQTT broker |
 | gRPC state distribution, safety/quality fields over the wire | `tests/test_controlplane.py`, real server on a real ephemeral port, real client |
 | TimescaleDB bridge SQL and error handling | `tests/test_timescale_bridge.py`, against a fake connection |
-| The full loop: plant to guarded controller to MQTT to subscriber | smoke-tested manually in this environment, not in CI |
+| The full loop: plant to guarded controller to MQTT to subscriber | re-verified in this session: a real embedded MQTT broker, a real `GuardedController`-wrapped `EfficientRuleBased` agent stepping a real Maitri plant, publishing via `TelemetryPublisher` and received end to end by `TelemetrySubscriber` -- 5/5 telemetry records round-tripped; not automated in CI |
 | Grafana rendering the dashboard against real data | **not verified here** -- needs a running Postgres and Grafana |
-| The compose file's service wiring itself | `docker compose config` resolves it cleanly (correct build contexts, volumes, dependency ordering) -- but no container has actually been started, since this environment's Docker CLI has no running daemon behind it |
+| The compose file's service wiring itself | `docker compose config` resolves it cleanly (correct build contexts, volumes, dependency ordering) in both sandboxes |
+| The image actually building | **blocked** in both sandboxes tried so far, for two different reasons (above) -- not yet verified in any environment |
 
-Everything in the left column is real, tested Python. The compose file wires
-that already-correct code to real infrastructure; running it is the remaining
-step, not a rewrite.
+Everything in the left column above the last two rows is real, tested
+Python. The compose file wires that already-correct code to real
+infrastructure; building the image and running it in a network
+environment that can actually reach Docker Hub's blob storage is the
+remaining step, not a rewrite.
 
 ## Services
 
