@@ -10,12 +10,36 @@ import pytest
 
 from allotrope.controlplane import allotrope_pb2 as pb2
 from allotrope.controlplane import allotrope_pb2_grpc as pb2_grpc
-from allotrope.controlplane.server import ControlPlaneServicer, serve
+from allotrope.controlplane.server import MAX_CONCURRENT_STREAMS, ControlPlaneServicer, serve
+
+TEST_TOKEN = "test-only-token-not-a-secret"
+
+
+class _AddMetadataInterceptor(grpc.UnaryUnaryClientInterceptor, grpc.UnaryStreamClientInterceptor):
+    """Attaches `x-api-key` to every outgoing call. `grpc.composite_channel_credentials`
+    needs TLS channel credentials as its base and so can't attach call
+    credentials to a plaintext test channel; an interceptor is the
+    plaintext-compatible equivalent for driving the real auth code path in
+    tests rather than skipping it."""
+
+    def __init__(self, token: str) -> None:
+        self._metadata = (("x-api-key", token),)
+
+    def _add(self, client_call_details):
+        metadata = list(client_call_details.metadata or [])
+        metadata.extend(self._metadata)
+        return client_call_details._replace(metadata=metadata)
+
+    def intercept_unary_unary(self, continuation, client_call_details, request):
+        return continuation(self._add(client_call_details), request)
+
+    def intercept_unary_stream(self, continuation, client_call_details, request):
+        return continuation(self._add(client_call_details), request)
 
 
 @pytest.fixture()
 def running_server():
-    server, port = serve(port=0)  # port 0: OS assigns an ephemeral free port
+    server, port, token = serve(port=0, token=TEST_TOKEN)  # port 0: OS assigns an ephemeral free port
     try:
         yield port
     finally:
@@ -24,6 +48,18 @@ def running_server():
 
 @pytest.fixture()
 def client(running_server):
+    raw_channel = grpc.insecure_channel(f"localhost:{running_server}")
+    channel = grpc.intercept_channel(raw_channel, _AddMetadataInterceptor(TEST_TOKEN))
+    try:
+        grpc.channel_ready_future(raw_channel).result(timeout=5)
+        yield pb2_grpc.ControlPlaneStub(channel)
+    finally:
+        raw_channel.close()
+
+
+@pytest.fixture()
+def unauthenticated_client(running_server):
+    """The same server, but a channel that never attaches x-api-key."""
     channel = grpc.insecure_channel(f"localhost:{running_server}")
     try:
         grpc.channel_ready_future(channel).result(timeout=5)
@@ -132,14 +168,100 @@ def test_reports_invalid_quality_once_the_run_is_out_of_data():
     sim = StationSimulation(
         station_id="maitri", cfg=cfg, controller=default_controller(cfg), periods=24
     )
-    servicer = ControlPlaneServicer(stations={"maitri": sim})
+    servicer = ControlPlaneServicer(stations={"maitri": sim}, token=TEST_TOKEN)
     for _ in range(sim.plant.n_steps):
         sim.step()
     assert sim.plant.done
 
     class _Ctx:
+        def invocation_metadata(self):
+            return (("x-api-key", TEST_TOKEN),)
+
         def abort(self, *a, **k):
             raise AssertionError("should not abort for a known station")
 
     state = servicer.GetState(pb2.StateRequest(station_id="maitri"), _Ctx())
     assert state.quality == pb2.INVALID
+
+
+# -- authentication (F5) and stream-pool exhaustion (F6), from the adversarial audit --
+
+
+def test_get_state_without_a_token_is_unauthenticated(unauthenticated_client):
+    with pytest.raises(grpc.RpcError) as exc_info:
+        unauthenticated_client.GetState(pb2.StateRequest(station_id="maitri"))
+    assert exc_info.value.code() == grpc.StatusCode.UNAUTHENTICATED
+
+
+def test_heartbeat_without_a_token_is_unauthenticated(unauthenticated_client):
+    with pytest.raises(grpc.RpcError) as exc_info:
+        unauthenticated_client.Heartbeat(pb2.HeartbeatRequest())
+    assert exc_info.value.code() == grpc.StatusCode.UNAUTHENTICATED
+
+
+def test_stream_state_without_a_token_is_unauthenticated(unauthenticated_client):
+    with pytest.raises(grpc.RpcError) as exc_info:
+        next(unauthenticated_client.StreamState(pb2.StateRequest(station_id="maitri")))
+    assert exc_info.value.code() == grpc.StatusCode.UNAUTHENTICATED
+
+
+def test_a_wrong_token_is_also_rejected(running_server):
+    channel = grpc.insecure_channel(f"localhost:{running_server}")
+    channel = grpc.intercept_channel(channel, _AddMetadataInterceptor("wrong-token"))
+    stub = pb2_grpc.ControlPlaneStub(channel)
+    with pytest.raises(grpc.RpcError) as exc_info:
+        stub.GetState(pb2.StateRequest(station_id="maitri"))
+    assert exc_info.value.code() == grpc.StatusCode.UNAUTHENTICATED
+
+
+def test_an_unset_token_is_generated_not_left_open():
+    """No ALLOTROPE_CONTROLPLANE_TOKEN and no explicit token= must still
+    result in a real, working credential requirement."""
+    server, port, token = serve(port=0)
+    try:
+        assert token
+        channel = grpc.insecure_channel(f"localhost:{port}")
+        try:
+            grpc.channel_ready_future(channel).result(timeout=5)
+            stub = pb2_grpc.ControlPlaneStub(channel)
+            with pytest.raises(grpc.RpcError) as exc_info:
+                stub.Heartbeat(pb2.HeartbeatRequest())
+            assert exc_info.value.code() == grpc.StatusCode.UNAUTHENTICATED
+
+            authed_channel = grpc.intercept_channel(channel, _AddMetadataInterceptor(token))
+            authed_stub = pb2_grpc.ControlPlaneStub(authed_channel)
+            assert authed_stub.Heartbeat(pb2.HeartbeatRequest()).ok is True
+        finally:
+            channel.close()
+    finally:
+        server.stop(None)
+
+
+def test_a_stream_flood_cannot_starve_unary_rpcs(running_server):
+    """The concrete F6 DoS: previously, MAX_CONCURRENT_STREAMS+ clients each
+    opening StreamState (and never disconnecting) would eventually exhaust
+    the entire gRPC thread pool, starving even Heartbeat. Now, calls past
+    the cap get RESOURCE_EXHAUSTED immediately, and a plain unary RPC keeps
+    working throughout."""
+    channel = grpc.insecure_channel(f"localhost:{running_server}")
+    channel = grpc.intercept_channel(channel, _AddMetadataInterceptor(TEST_TOKEN))
+    stub = pb2_grpc.ControlPlaneStub(channel)
+
+    streams = []
+    try:
+        for _ in range(MAX_CONCURRENT_STREAMS):
+            call = stub.StreamState(pb2.StateRequest(station_id="maitri"))
+            next(call)  # block until the server has actually started this stream
+            streams.append(call)
+
+        with pytest.raises(grpc.RpcError) as exc_info:
+            overflow = stub.StreamState(pb2.StateRequest(station_id="maitri"))
+            next(overflow)
+        assert exc_info.value.code() == grpc.StatusCode.RESOURCE_EXHAUSTED
+
+        # The unary RPC path is untouched by the stream flood.
+        assert stub.Heartbeat(pb2.HeartbeatRequest()).ok is True
+    finally:
+        for call in streams:
+            call.cancel()
+        channel.close()

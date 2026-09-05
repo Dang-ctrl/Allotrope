@@ -86,6 +86,39 @@ ValidationResult` passed into `run_round`/`run_rounds`; the default one
 above is what `coordinator.main()` uses, but a deployment could substitute
 a stricter one without touching the aggregation or rollback logic.
 
+## Outlier clipping (not Byzantine-robust aggregation)
+
+Found in this project's own adversarial audit (F8): plain FedAvg has no
+defense at all against one contributor submitting an anomalously
+large-magnitude update. Averaging is linear, so a single participant
+scaling their tensors up arbitrarily dominates the result regardless of
+how many honest participants there are — provable directly:
+`average_state_dict` with `clip_multiplier=None` (the pre-fix behaviour)
+against four honest updates of `1.0` and one malicious update of
+`1,000,000.0` produces an average over `100,000` — nowhere near what any
+honest contributor actually reported.
+
+`allotrope.federated.aggregate.clip_outliers` now runs before averaging by
+default: each contributor's tensor, per parameter, is scaled down if its
+norm exceeds `DEFAULT_CLIP_MULTIPLIER` (3x) times the *median* norm across
+contributors for that parameter — a median because it isn't moved by one
+outlier the way a mean is. The same scenario above, clipped, produces an
+average under `3.0`.
+
+**What this is not.** This is not Byzantine-robust aggregation, and this
+project makes no claim that it is: it does nothing against a coordinated
+collusion of multiple contributors, a subtle small-magnitude backdoor
+tuned to stay under the clip threshold, or any attack that doesn't show up
+as an outlier norm. It also does nothing about contributor identity —
+`allotrope.federated`'s current "federated learning across stations" is a
+single-process orchestrator with no real multi-party transport, so there
+is no untrusted network participant to authenticate yet (see this
+package's own docstring for that scope boundary). What it does, and is
+tested to do, is close the one gap plain averaging had *no* answer for at
+all: `tests/test_federated.py`'s `test_clip_outliers_bounds_a_single_scaled_up_contributor`
+and `test_average_state_dict_with_clipping_resists_a_scaled_up_outlier`
+reproduce the exact scenario above.
+
 ## Honest status
 
 **Two real rounds were run** (`python -m allotrope.federated.coordinator

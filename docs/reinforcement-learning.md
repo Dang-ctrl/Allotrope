@@ -106,25 +106,46 @@ maitri --seed 1 --periods 8760`):
 
 | | Legacy N+1 | Efficient rules | Hybrid, guarded (60k steps) | Hybrid, guarded (500k steps) | Hybrid, unguarded (500k steps) |
 |---|---|---|---|---|---|
-| Fuel | 254.6 kL | 214.6 kL | 237.2 kL | **224.0 kL** | 155.3 kL |
-| Black carbon | 71 826 g | 10 845 g | 59 730 g | **41 221 g** | 18 399 g |
-| Wet-stacking fraction | 0.794 | 0.024 | 0.368 | **0.172** | 0.148 |
-| Genset starts | 21 | 286 | 947 | **497** | 3 749 |
-| Unmet water | 3 863 kWh | 1 262 kWh | -- | **64 810 kWh** | 79 030 kWh |
+| Fuel | 254.6 kL | 214.6 kL | 237.2 kL | **223.3 kL** | 155.3 kL |
+| Black carbon | 71 826 g | 11 008 g | 59 730 g | **38 269 g** | 18 399 g |
+| Wet-stacking fraction | 0.794 | 0.023 | 0.368 | **0.167** | 0.148 |
+| Genset starts | 21 | 286 | 947 | **495** | 3 749 |
+| Unmet water | 3 863 kWh | 1 262 kWh | -- | **66 328 kWh** | 79 030 kWh |
 | Critical unserved | 0 kWh | 0 kWh | **0 kWh** | **0 kWh** | 197 146 kWh |
 | Freeze violation steps | 0 | 0 | 0 | 0 | 0 |
 
 (`--`: not reported for the 60k run's writeup. `python -m allotrope.train
 --agent hybrid --station maitri --total-steps 500000 --episode-steps 336
---warmup-steps 1000 --buffer-capacity 100000` reproduces the 500k run.)
+--warmup-steps 1000 --buffer-capacity 100000` reproduces the 500k run.
+The 500k column was re-measured after fixing a reproducibility bug --
+see "A correction" below -- so it differs slightly, in the fourth digit,
+from an earlier version of this table.)
+
+**A correction.** An earlier version of this table reported 497 genset
+starts for the 500k run. That number was never wrong exactly, but it was
+never exactly reproducible either: this project's own adversarial audit
+found that `GuardedController`'s real-time latency budget -- a correct
+safety property for actual control, where a late answer really is a wrong
+answer -- was also being enforced during *offline* evaluation, where it
+has no business being. Because the budget is checked against a wall-clock
+measurement of each forward pass, re-running the identical evaluation
+(same checkpoint, same seed) on a machine under different load silently
+substituted the deterministic fallback a different number of times,
+giving genset_starts anywhere from 489 to 527 across six otherwise
+identical runs. `GuardedController` now takes an `enforce_latency_budget`
+flag (default `True`, unchanged for real deployment); `allotrope.evaluate`,
+`allotrope.evaluate_scenarios`, and the federated round validator all set
+it `False`, and every number in this table above is now a pure function of
+(checkpoint, seed) -- reconfirmed by running the 500k evaluation four times
+and getting 495 starts every time.
 
 Read this for what it actually shows, not more:
 
 - **More training closed roughly 60 % of the gap to the best baseline, on
   the metric the 60k run named as the problem.** Genset starts fell from 947
-  to 497 -- still well above `EfficientRuleBased`'s 286, but the fuel gap to
-  that baseline shrank from 22.6 kL to 9.4 kL, and wet-stacking fraction
-  dropped by more than half (0.368 to 0.172). This is exactly the
+  to 495 -- still well above `EfficientRuleBased`'s 286, but the fuel gap to
+  that baseline shrank from 22.6 kL to 8.6 kL, and wet-stacking fraction
+  dropped by more than half (0.368 to 0.167). This is exactly the
   `genset_start_per_event` penalty finally being learned, as the 60k
   writeup predicted it would need more training to do -- not a different
   mechanism, just more of the same one working.
@@ -139,7 +160,7 @@ Read this for what it actually shows, not more:
   reward doesn't itself forbid, and the projection caught every instance of
   it regardless.
 - **A cost the reward under-weights showed up once training pushed hard
-  enough on the ones it doesn't: unmet water.** 64 810 kWh of deferred
+  enough on the ones it doesn't: unmet water.** 66 328 kWh of deferred
   melting against the efficient baseline's 1 262 kWh is a real regression
   this run surfaces for the first time, not noise -- `unmet_water_per_kwh`
   in `RewardWeights` (₹60/kWh) is small next to `fuel_per_l` (₹250/L) and
@@ -148,7 +169,7 @@ Read this for what it actually shows, not more:
   attention before the next training run, not a claim that the current
   weights are wrong -- they simply have not been tested this hard before.
 - **Still not competitive with `EfficientRuleBased` on fuel or starts.**
-  497 starts and 224.0 kL beat the incumbent (`LegacyNPlusOne`) by a wide
+  495 starts and 223.3 kL beat the incumbent (`LegacyNPlusOne`) by a wide
   margin but remain behind the best rule-based baseline. Whether closing
   the rest of this gap needs more steps, reward reshaping around the
   unmet-water finding above, or architecture changes (Section "RL

@@ -264,6 +264,40 @@ def test_guarded_hybrid_agent_survives_a_corrupted_checkpoint():
     _assert_station_safe(result.summary, "NaN-corrupted hybrid agent")
 
 
+def test_offline_evaluation_is_reproducible_across_runs():
+    """A deterministic checkpoint evaluated offline must give the same answer
+    every time -- not just the same action for the same observation.
+
+    This guards against a real bug found in this project's own adversarial
+    audit: `GuardedController`'s real-time latency budget (a genuinely
+    correct safety property for actual control) silently substitutes the
+    deterministic fallback whenever a forward pass exceeds it, and because
+    that measurement is a wall-clock one, it made offline evaluation
+    non-reproducible -- the same checkpoint and seed produced different
+    genset-starts counts (489-527 observed across six runs) purely from
+    CPU scheduling jitter. `enforce_latency_budget=False` is what
+    `allotrope.evaluate`, `allotrope.evaluate_scenarios`, and
+    `allotrope.federated.round`'s validator all now set for exactly this
+    reason; this test locks in that repeated full-episode runs, not just
+    repeated single-action calls, agree exactly.
+    """
+    cfg = load_station("maitri")
+    obs_dim, n_g, dispatch_dim = _dims(cfg)
+    dqn = BranchingDQN(obs_dim, n_g, DQNConfig(seed=0))
+    sddpg = SDDPG(obs_dim, dispatch_dim, SDDPGConfig(seed=0))
+    hybrid = HybridAgent(cfg, dqn, sddpg, deterministic=True)
+
+    summaries = []
+    for _ in range(3):
+        guard = GuardedController(cfg, agent=hybrid, enforce_latency_budget=False)
+        plant = build_plant(cfg, periods=24 * 20, seed=1)
+        summaries.append(run_episode(plant, guard).summary)
+
+    reference = summaries[0]
+    for i, summary in enumerate(summaries[1:], start=1):
+        assert summary == reference, f"run {i} disagreed with run 0: {summary} vs {reference}"
+
+
 def test_hybrid_agent_matches_the_action_space_contract():
     """decode_action must never be handed something outside [-1, 1] or the wrong shape."""
     cfg = load_station("maitri")
