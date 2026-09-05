@@ -37,13 +37,23 @@ class TelemetrySubscriber:
     on a link this unreliable.
     """
 
-    def __init__(self, station_ids: list[str], host: str, port: int = 1883) -> None:
+    def __init__(
+        self,
+        station_ids: list[str],
+        host: str,
+        port: int = 1883,
+        username: str | None = None,
+        password: str | None = None,
+    ) -> None:
+        """See `TelemetryPublisher`'s docstring for `username`/`password`."""
         self.station_ids = station_ids
         self.stats = SubscriberStats()
         self._callbacks: list[TelemetryCallback] = []
         self._topic_to_station = {telemetry_topic(sid): sid for sid in station_ids}
 
         self._client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+        if username is not None:
+            self._client.username_pw_set(username, password)
         self._client.on_message = self._on_message
         self._client.connect(host, port, keepalive=60)
         for topic in self._topic_to_station:

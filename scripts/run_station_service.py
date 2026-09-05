@@ -15,6 +15,7 @@ telemetry for the TimescaleDB bridge and Grafana to pick up.
 from __future__ import annotations
 
 import argparse
+import os
 import time
 from pathlib import Path
 
@@ -58,7 +59,13 @@ def main() -> None:
     plant.reset()
     guard.reset()
 
-    publisher = TelemetryPublisher(cfg.site.id, host=args.mqtt_host, port=args.mqtt_port)
+    publisher = TelemetryPublisher(
+        cfg.site.id,
+        host=args.mqtt_host,
+        port=args.mqtt_port,
+        username=os.environ.get("MQTT_USERNAME"),
+        password=os.environ.get("MQTT_PASSWORD"),
+    )
     print(f"publishing telemetry to MQTT at {args.mqtt_host}:{args.mqtt_port}")
 
     try:

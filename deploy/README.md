@@ -9,12 +9,19 @@ project; the controller and the plant it commands stay in the same process
 (see that document's "what's explicitly not implemented").
 
 ```bash
+cp deploy/.env.example deploy/.env   # fill in MQTT_USERNAME / MQTT_PASSWORD
 docker compose -f deploy/docker-compose.yml up --build
 ```
 
+`MQTT_USERNAME`/`MQTT_PASSWORD` are required, not defaulted -- found in this
+project's own adversarial audit (F7): the broker previously allowed fully
+anonymous publish, including to the topic model weights travel on for
+federated learning. `docker compose up` fails fast with a clear message if
+either is unset rather than silently falling back to anonymous access.
+
 Then:
 - Grafana at http://localhost:3000 (anonymous viewer access enabled; admin/allotrope)
-- MQTT broker at localhost:1883
+- MQTT broker at localhost:1883 (requires the credentials above)
 - TimescaleDB at localhost:5432 (allotrope/allotrope)
 
 ## What is proven where
@@ -63,6 +70,7 @@ on faith in the other environment's report, not as a build verified here.
 | Piece | How it is actually verified |
 |---|---|
 | MQTT publish/subscribe, malformed-payload handling | `tests/test_mqtt.py`, against a real embedded MQTT broker |
+| MQTT client credential passing (F7) | `tests/test_mqtt.py`, unit-tested (the embedded broker has no auth to test rejection against -- see those tests' own comment); `deploy/mosquitto.conf`'s `allow_anonymous false` + generated password file is **not verified running** in this environment, same Docker-build blocker as below |
 | gRPC state distribution, safety/quality fields over the wire | `tests/test_controlplane.py`, real server on a real ephemeral port, real client |
 | TimescaleDB bridge SQL and error handling | `tests/test_timescale_bridge.py`, against a fake connection |
 | The full loop: plant to guarded controller to MQTT to subscriber | re-verified in this session: a real embedded MQTT broker, a real `GuardedController`-wrapped `EfficientRuleBased` agent stepping a real Maitri plant, publishing via `TelemetryPublisher` and received end to end by `TelemetrySubscriber` -- 5/5 telemetry records round-tripped; not automated in CI |
@@ -92,12 +100,19 @@ Every piece also runs as a plain Python process, which is how it was actually
 exercised during development:
 
 ```bash
-# broker (needs mosquitto installed, or point --mqtt-host at any broker)
+# broker (needs mosquitto installed, or point --mqtt-host at any broker);
+# deploy/mosquitto.conf requires a password file -- generate one with:
+#   mosquitto_passwd -b -c deploy/passwd "$MQTT_USERNAME" "$MQTT_PASSWORD"
 mosquitto -c deploy/mosquitto.conf
 
-# a station, with a trained checkpoint if one exists
-python scripts/run_station_service.py --station maitri --checkpoint runs/hybrid_maitri_.../checkpoint.pt
+# a station, with a trained checkpoint if one exists -- MQTT_USERNAME and
+# MQTT_PASSWORD are read from the environment (allotrope.mqtt.publisher's
+# TelemetryPublisher takes them as constructor args; this script wires the
+# environment through to that)
+MQTT_USERNAME=... MQTT_PASSWORD=... \
+  python scripts/run_station_service.py --station maitri --checkpoint runs/hybrid_maitri_.../checkpoint.pt
 
 # the bridge (needs a running Postgres/TimescaleDB)
-python scripts/run_timescale_bridge.py --stations maitri bharati
+MQTT_USERNAME=... MQTT_PASSWORD=... \
+  python scripts/run_timescale_bridge.py --stations maitri bharati
 ```

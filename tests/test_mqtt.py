@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from unittest.mock import patch
 
 import pytest
 
@@ -156,3 +157,35 @@ def test_safety_reports_publish_on_their_own_topic(broker):
     pub.close()
     watcher.loop_stop()
     watcher.disconnect()
+
+
+# -- credentials (F7 from the adversarial audit) -------------------------------
+#
+# The embedded test broker above has no auth configured (see its own
+# docstring), so it cannot prove a real broker rejects a bad credential --
+# that's `deploy/mosquitto.conf`'s job (allow_anonymous false, a generated
+# password file), unverified in this environment for the same Docker-build
+# reasons documented in deploy/README.md. What these two tests DO prove:
+# the client classes actually authenticate when given credentials, rather
+# than silently connecting anonymously regardless of what's passed in.
+
+
+def test_publisher_authenticates_when_given_credentials():
+    with patch("paho.mqtt.client.Client") as MockClient:
+        instance = MockClient.return_value
+        TelemetryPublisher("maitri", host="127.0.0.1", port=1883, username="u", password="p")
+        instance.username_pw_set.assert_called_once_with("u", "p")
+
+
+def test_publisher_does_not_authenticate_when_credentials_are_omitted():
+    with patch("paho.mqtt.client.Client") as MockClient:
+        instance = MockClient.return_value
+        TelemetryPublisher("maitri", host="127.0.0.1", port=1883)
+        instance.username_pw_set.assert_not_called()
+
+
+def test_subscriber_authenticates_when_given_credentials():
+    with patch("paho.mqtt.client.Client") as MockClient:
+        instance = MockClient.return_value
+        TelemetrySubscriber(["maitri"], host="127.0.0.1", port=1883, username="u", password="p")
+        instance.username_pw_set.assert_called_once_with("u", "p")
