@@ -9,6 +9,9 @@ import { PowerBalance } from "./PowerBalance";
 import { SafetyPanel } from "./SafetyPanel";
 import { StoragePanel } from "./StoragePanel";
 import { StatusPill } from "./StatusPill";
+import { TrendChart } from "./TrendChart";
+
+const TELEMETRY_WINDOW = 120;
 
 const POLL_MS = 1000;
 
@@ -31,6 +34,11 @@ export function CommandCenter({ stationId }: { stationId: string }) {
   const state = usePolling(() => api.getState(stationId), POLL_MS, [stationId, reloadKey]);
   const safety = usePolling(() => api.getSafety(stationId), POLL_MS, [stationId, reloadKey]);
   const metrics = usePolling(() => api.getMetrics(stationId), POLL_MS, [stationId, reloadKey]);
+  const telemetry = usePolling(
+    () => api.getTelemetry(stationId, TELEMETRY_WINDOW),
+    POLL_MS,
+    [stationId, reloadKey],
+  );
 
   // Restarting each poll's effect (by changing a dependency) fires an
   // immediate fetch, so a control action (start/stop/reset/step) is
@@ -46,19 +54,19 @@ export function CommandCenter({ stationId }: { stationId: string }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-base-600 bg-base-800/60 px-4 py-3">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-col gap-3 rounded-md border border-base-600 bg-base-800/60 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <span className="text-lg font-semibold text-ink-100">{detail.name}</span>
           <StatusPill tone="neutral">SIMULATION</StatusPill>
-          {state.data && (
-            <span className="num text-xs text-ink-400">
-              step {state.data.step} / {state.data.n_steps} · {state.data.timestamp}
-            </span>
-          )}
           {state.data && (
             <StatusPill tone={state.data.running ? "ok" : "neutral"}>
               {state.data.running ? "running" : "stopped"}
             </StatusPill>
+          )}
+          {state.data && (
+            <span className="num w-full text-xs text-ink-400 sm:w-auto">
+              step {state.data.step} / {state.data.n_steps} · {state.data.timestamp}
+            </span>
           )}
         </div>
         <ControlBar
@@ -78,6 +86,8 @@ export function CommandCenter({ stationId }: { stationId: string }) {
           <StoragePanel storage={detail.storage} observation={state.data.observation} />
         </div>
       )}
+
+      {telemetry.data && <TrendChart telemetry={telemetry.data} />}
 
       {safety.data && <SafetyPanel safety={safety.data} />}
 

@@ -109,6 +109,28 @@ def test_safety_report_reflects_the_guard_after_stepping():
     assert 0.0 <= body["projection_rate"] <= 1.0
 
 
+def test_telemetry_safety_field_matches_the_safety_endpoints_shape():
+    """The same SafetyReport must serialize identically everywhere it appears.
+
+    Found via the frontend: /stations/{id}/telemetry stored the raw
+    SafetyReport dataclass, so FastAPI's default dataclass encoder kept its
+    `detail` field nested; /stations/{id}/safety called SafetyReport.as_dict(),
+    which spreads `detail`'s keys flat instead. The same underlying report
+    had two different wire shapes depending on which endpoint served it,
+    silently breaking any client (this project's own Command Center
+    included) that assumed one shape held everywhere.
+    """
+    client = _client()
+    client.post("/stations/maitri/simulation/step")
+
+    telemetry_safety = client.get("/stations/maitri/telemetry").json()[0]["safety"]
+    live_safety = client.get("/stations/maitri/safety").json()["last_report"]
+
+    assert telemetry_safety == live_safety
+    assert "detail" not in telemetry_safety
+    assert "critical_load_kw" in telemetry_safety
+
+
 def test_start_then_stop_auto_advances_and_then_holds():
     # A `with`-managed TestClient keeps its background event-loop portal (and
     # therefore the simulation's asyncio task) alive across every call in this
