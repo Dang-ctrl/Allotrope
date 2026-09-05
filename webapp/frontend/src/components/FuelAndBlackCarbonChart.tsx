@@ -28,15 +28,15 @@ export function FuelAndBlackCarbonChart({ rows }: { rows: TelemetryRow[] }) {
           <YAxis yAxisId="fuel" tick={{ fontSize: 11 }} />
           <YAxis yAxisId="bc" orientation="right" tick={{ fontSize: 11 }} />
           <Tooltip />
-          <Line yAxisId="fuel" type="monotone" dataKey="fuel_l" name="Fuel (L)" stroke="#3b82f6" dot={false} />
+          <Line yAxisId="fuel" type="monotone" dataKey="fuel_l" name="Fuel (L)" stroke="#3b82f6" dot={false} isAnimationActive={false} />
           <Line
             yAxisId="bc"
             type="monotone"
             dataKey="black_carbon_mg"
             name="Black carbon (mg)"
             stroke="#ef4444"
-            dot={false}
-          />
+            dot={false} isAnimationActive={false}
+            />
         </LineChart>
       </ResponsiveContainer>
     </Card>

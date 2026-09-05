@@ -8,12 +8,21 @@ import { StormScenario } from './StormScenario'
 import { WetstackScenario } from './WetstackScenario'
 import { FreeEnergyScenario } from './FreeEnergyScenario'
 import { GridStressScenario } from './GridStressScenario'
+import { AgentEvalScenario } from './AgentEvalScenario'
+import { SafetyAuditScenario } from './SafetyAuditScenario'
+import { ColdBatteryScenario } from './ColdBatteryScenario'
+import { FederatedScenario } from './FederatedScenario'
 
 const TABS = [
   { value: 'storm', label: 'Storm + AI failure' },
   { value: 'wetstack', label: 'Wet-stacking' },
   { value: 'freeenergy', label: 'Free energy' },
   { value: 'gridstress', label: 'Grid stress test' },
+  { value: 'agentmaitri', label: 'Learned agent · Maitri' },
+  { value: 'agentbharati', label: 'Learned agent · Bharati' },
+  { value: 'safetyaudit', label: 'Safety audit' },
+  { value: 'coldbattery', label: 'Cold battery' },
+  { value: 'federated', label: 'Federated learning' },
 ] as const
 
 export function ScenarioExplorer() {
@@ -35,11 +44,12 @@ export function ScenarioExplorer() {
   }
 
   const { data } = state
+  const tabs = TABS.filter((t) => t.value !== 'federated' || data.federated)
 
   return (
     <Grid columns={1}>
       <TabList value={tab} onChange={setTab} aria-label="Scenario">
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <Tab key={t.value} value={t.value} label={t.label} />
         ))}
       </TabList>
@@ -48,6 +58,11 @@ export function ScenarioExplorer() {
       {tab === 'wetstack' && <WetstackScenario data={data.wetstack} />}
       {tab === 'freeenergy' && <FreeEnergyScenario data={data.freeenergy} />}
       {tab === 'gridstress' && <GridStressScenario data={data.gridstress} />}
+      {tab === 'agentmaitri' && <AgentEvalScenario data={data.agentmaitri} />}
+      {tab === 'agentbharati' && <AgentEvalScenario data={data.agentbharati} />}
+      {tab === 'safetyaudit' && <SafetyAuditScenario data={data.safetyaudit} />}
+      {tab === 'coldbattery' && <ColdBatteryScenario data={data.coldbattery} />}
+      {tab === 'federated' && data.federated && <FederatedScenario data={data.federated} />}
     </Grid>
   )
 }

@@ -744,18 +744,41 @@ the broker away and given it back.
 ### The scenario explorer, inside the same UI
 
 `webapp/frontend/src/scenarios/` adds a second top-level view — a
-`SegmentedControl` in the top nav switches between "Live" and "Scenarios" — so
-the same four played-back simulations already published as a standalone
-Claude Artifact (see [context.md](../context.md), "Judge-facing artifacts")
-are also reachable without leaving the live dashboard. It reads a static copy
-of `scripts/generate_scenarios.py`'s output
+`SegmentedControl` in the top nav switches between "Live" and "Scenarios" —
+reachable without leaving the live dashboard. It reads a static copy of
+`scripts/generate_scenarios.py`'s output
 (`webapp/frontend/public/scenarios.json`), not live data, and is not wired to
 regenerate automatically — regenerating the script's output means re-copying
 the file by hand.
 
-**A real bug, caught before it shipped**: the grid-stress view initially
-displayed `curtailPv`/`curtailWind` directly as "% curtailed". Those fields
-are actually the *fraction of power still allowed through*
+**Nine scenarios**, up from the original four (storm+AI-failure, wet-stacking,
+free-energy, grid-stress): the trained agent's held-out evaluation at each
+station separately (§8's own framing — different stations land on different
+points of the same trade-off, so they get separate cases rather than one
+averaged-together view), the safety audit's five adversarial attacks (§6),
+dual-chemistry battery cold-derating (§5, computed directly from
+`allotrope.sim.assets.Battery`, not illustrated), and the federated-learning
+negative result (§8/§10). Every new number is a fresh run in this
+environment via `scripts/generate_scenarios.py`, not a copy of a number
+already in this document — see the note below on what that surfaced.
+
+**These fresh runs do not agree with this document's published numbers, and
+that is itself worth recording.** Re-training `checkpoints/maitri.pt` from
+scratch and re-evaluating it produced a materially less flattering result
+than §8 reports: −0.4% fuel vs. `EfficientRuleBased` (§8: −1.8%) and **+62
+starts/year, a loss** on that comparison (§8: −22.9%, a win). Bharati's
+checkpoint still wins both comparisons, by a smaller margin than published
+(−1.7%/−82 starts vs. §8's −5.6%/−89%). A fresh federated run reproduces the
+negative result in §8 directionally but not exactly. None of this means §8 is
+wrong — both are real runs of the same training procedure — it means the
+procedure has real run-to-run variance, which any claim resting on a single
+training run should say plainly rather than imply the number is exact. Safety
+held in every fresh run, every held-out seed, both stations, exactly as it
+must.
+
+**Two real bugs, caught before they shipped.** First: the grid-stress view
+initially displayed `curtailPv`/`curtailWind` directly as "% curtailed".
+Those fields are actually the *fraction of power still allowed through*
 (`allotrope/network/twin.py`'s `curtailment_fraction`; 1.0 means no
 curtailment) — their own opposite. At the multiplier level the data itself
 labels "no intervention needed", the first version of the page read "PV
@@ -763,6 +786,20 @@ curtail 100%". Fixed to display the complement, and checked against the raw
 JSON that the corrected percentages climb monotonically from 0% to 100% and
 turn non-zero at exactly the multiplier where `intervened` first lists that
 bus.
+
+Second, more serious, and not limited to the new scenarios: Recharts' default
+mount-in animation for `<Line>`/`<Area>`/`<Bar>` can get **stuck partway and
+never complete** — bars and lines rendered at roughly 1/14th their true
+height indefinitely, with correct relative proportions between series but no
+relationship to the axis's own (correctly labelled) domain. Reproduced
+repeatedly, surviving a full hard reload, ruled out as ordinary animation
+delay by comparing two DOM measurements several seconds apart within one
+script (a stuck animation is identical between them; a merely slow one
+visibly progresses). Fixed by adding `isAnimationActive={false}` to every
+chart mark in the app, including the original four scenarios and the live
+dashboard's own charts, none of which need an entrance animation for
+already-computed or steadily-arriving data. Verified fixed across all nine scenario
+tabs and the live dashboard.
 
 ## 14. Maintenance
 

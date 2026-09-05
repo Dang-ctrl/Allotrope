@@ -83,9 +83,109 @@ export interface GridStress {
   realWind: number
 }
 
+export interface AgentEvalRow {
+  seed: number
+  fuelLegacy: number
+  fuelEfficient: number
+  fuelAgent: number
+  bcLegacy: number
+  bcEfficient: number
+  bcAgent: number
+  startsLegacy: number
+  startsEfficient: number
+  startsAgent: number
+  critUnservedAgent: number
+  freezeAgent: number
+}
+
+export interface AgentEval {
+  station: string
+  seeds: number[]
+  rows: AgentEvalRow[]
+  meanFuelLegacy: number
+  meanFuelEfficient: number
+  meanFuelAgent: number
+  meanStartsLegacy: number
+  meanStartsEfficient: number
+  meanStartsAgent: number
+  meanBcLegacy: number
+  meanBcEfficient: number
+  meanBcAgent: number
+  fuelVsEfficientPct: number
+  startsVsEfficientDelta: number
+  maxCriticalUnservedAgent: number
+  maxFreezeAgent: number
+}
+
+export interface FederatedStationResult {
+  station: string
+  meanFuelEfficient: number
+  meanFuelFederated: number
+  meanFuelOwnCheckpoint: number
+  meanStartsEfficient: number
+  meanStartsFederated: number
+  meanStartsOwnCheckpoint: number
+  maxCriticalUnservedFederated: number
+  maxFreezeFederated: number
+}
+
+export interface Federated {
+  maitri: FederatedStationResult
+  bharati: FederatedStationResult
+}
+
+export interface SafetyAuditRow {
+  attack: string
+  critLostGuarded: number
+  critLostUnguarded: number
+  freezeGuarded: number
+  freezeUnguarded: number
+}
+
+export interface InterventionCount {
+  name: string
+  count: number
+}
+
+export interface SafetyAudit {
+  station: string
+  days: number
+  rows: SafetyAuditRow[]
+  interventionCounts: InterventionCount[]
+  worstGuarded: number
+  worstFreezeGuarded: number
+}
+
+export interface ColdBatteryRow {
+  tempC: number
+  derate: number
+  maxChargeKw: number
+  maxDischargeKw: number
+}
+
+export interface ColdBatteryPack {
+  chemistry: string
+  location: string
+  minOperatingTempC: number
+  maxChargeKwRated: number
+  maxDischargeKwRated: number
+  capacityKwh: number
+  rows: ColdBatteryRow[]
+}
+
+export interface ColdBattery {
+  station: string
+  packs: Record<string, ColdBatteryPack>
+}
+
 export interface Scenarios {
   storm: StormRow[]
   wetstack: Wetstack
   freeenergy: FreeEnergy
   gridstress: GridStress
+  agentmaitri: AgentEval
+  agentbharati: AgentEval
+  safetyaudit: SafetyAudit
+  coldbattery: ColdBattery
+  federated?: Federated
 }
