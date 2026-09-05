@@ -267,7 +267,28 @@ but it shows the system actually running rather than a replay.
   hours; (4) a forward stress test of the OpenDSS twin's Volt-VAr/Volt-Watt
   fallback as installed renewable capacity is scaled from 1x to 6x today's —
   explicitly labelled as a stress test, since real generation today never
-  approaches the trigger point.
+  approaches the trigger point. **This link was published from a different
+  Claude account (a teammate's session) and cannot be read or updated from
+  this one** — attempting to republish it here returns "not found" rather
+  than the page. Whoever owns it needs to update it directly, or share it
+  with other accounts that need to maintain it.
+- **Winter-Over Log** (`https://claude.ai/code/artifact/0a7dbc7e-51ae-4269-9739-a77e5c65ca8c`)
+  — a second artifact covering the same four scenarios, published from this
+  session (2026-09-05) specifically because the one above wasn't reachable to
+  update. Same underlying `scenarios.json`, different presentation: a
+  station-log rail (STORM / WETSTACK / FREEWIND / GRIDSTRESS), hand-drawn SVG
+  charts with hover tooltips and direct labels, and a play/scrub transport
+  control on the two time-series cases (storm, free-wind) that moves a
+  crosshair through the replay. Built following the project's `dataviz`
+  discipline throughout — single-axis charts only (the original React
+  version's dual-axis weather chart is *not* replicated here; temperature and
+  wind speed are two separate small multiples instead), a validated
+  categorical pair (`#1097ba` glacier cyan for the efficient/guarded policy,
+  `#c9793a` ember amber for legacy/unguarded — CVD ΔE 17.5, checked with
+  `scripts/validate_palette.js`), and status colors (danger `#bc2a49`,
+  confirm `#1f9c48`) reserved and never reused as series identity.
+  **Until someone has update access to the original link, treat this one as
+  the actively maintained scenario-explorer artifact.**
 
 `scripts/generate_scenarios.py` reproduces the exact data behind all four
 scenario-explorer cases and is checked against the published data byte-for-byte
@@ -283,9 +304,13 @@ re-deriving each scenario's timing independently before trusting it.
 (Phase 6, above) — not a replacement for the standalone artifact (which stays
 useful precisely because it needs no running stack), but the same
 `scenarios.json` rendered live-side for a demo that's already got the
-containers up. Keep both in sync: regenerate the script's output, diff it,
-republish the artifact, *and* re-copy the file into
-`webapp/frontend/public/scenarios.json`.
+containers up. **Three places now need to stay in sync** whenever anything
+upstream of these scenarios changes: regenerate
+`scripts/generate_scenarios.py`'s output and diff it, re-copy the file into
+`webapp/frontend/public/scenarios.json`, and republish whichever
+scenario-explorer artifact this session (or whoever's session) has update
+access to — currently that's **Winter-Over Log**, not the original link, per
+the access note above.
 ## Open questions and known gaps
 
 - **Bharati agent: done**, results above. **Federated training: done, and
