@@ -39,7 +39,26 @@ recorded honestly rather than collapsed into one vague "not tested":
 
 Both are real, environment-specific network/infrastructure limits, not
 gaps in the code being deployed -- which is why the project's test suite
-does not depend on this file at all:
+does not depend on this file at all.
+
+A parallel implementation of this project's architecture did reach an
+environment where the registry pull went through, and its build there
+surfaced a real bug in `deploy/Dockerfile`, ported into this one: the image
+ran `pip install -e .` with no extras, which installs only the project's
+base dependencies -- silently omitting `paho-mqtt`, `psycopg` and `torch`.
+Both entry points in this compose stack need more than the base set
+(`scripts/run_station_service.py` publishes over MQTT and, with
+`--checkpoint`, loads a torch agent; `scripts/run_timescale_bridge.py`
+talks to TimescaleDB via psycopg), so both would have failed at import
+time inside the container the moment one was actually run -- a class of
+bug this project's own (torch-free by design) test suite cannot see, and
+that only building and running the image catches. Fixed here to
+`pip install -e ".[rl,mqtt,deploy]"`, and the CPU-only torch install moved
+into its own layer ahead of the `COPY`, so an application-code change no
+longer forces a full torch re-download on rebuild. This environment still
+cannot verify the fix by actually building (same registry block as above,
+reconfirmed just now), so it stands as a code review finding applied
+on faith in the other environment's report, not as a build verified here.
 
 | Piece | How it is actually verified |
 |---|---|
