@@ -106,7 +106,7 @@ class PolarMicrogridEnv(gym.Env):
         return max(self.cfg.total_genset_kw, 1.0)
 
     def _observation_width(self) -> int:
-        return 12 + 3 * len(self.cfg.gensets) + 2 * len(self.cfg.storage)
+        return 12 + 5 * len(self.cfg.gensets) + 2 * len(self.cfg.storage)
 
     # -- gym api ----------------------------------------------------------
 
@@ -260,6 +260,19 @@ class PolarMicrogridEnv(gym.Env):
         features += [float(v) for v in obs["genset_online"]]
         features += [p / g.rated_kw for p, g in zip(obs["genset_power_kw"], cfg.gensets)]
         features += [float(d) for d in obs["genset_deposit"]]
+        # Whether a commit/decommit request is even feasible right now
+        # (minimum up/down time). Diagnosed as a real gap during this
+        # project's own RL performance audit: the safety layer already
+        # reads these two fields to decide whether a stop/start would
+        # actually take effect (allotrope.safety.projection's
+        # _effective_online), but the agent never saw them -- it had to
+        # infer switching feasibility blind, purely from reward, which is
+        # consistent with the observed failure mode (6,599 stop requests
+        # blocked for breaching reserve across one evaluation year, versus
+        # only 495 actual starts -- a policy repeatedly asking for a stop
+        # it has no way to know is currently locked out).
+        features += [float(v) for v in obs["genset_can_start"]]
+        features += [float(v) for v in obs["genset_can_stop"]]
         features += [float(s) for s in obs["battery_soc"]]
         features += [
             obs["battery_max_discharge_kw"][k] / max(s.max_discharge_kw, 1.0)
