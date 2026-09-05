@@ -12,14 +12,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+
+# CPU-only torch, installed before the project's own files are copied in. The
+# control policy is small (128-unit MLPs), so a GPU buys nothing here and
+# would roughly 10x the image size for no benefit. Kept in its own layer,
+# ahead of the COPY below: torch is a slow, heavy download, and putting it
+# after pyproject.toml (as an earlier version of this file did) meant any
+# dependency change forced a full torch re-download on every rebuild.
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch
+
 COPY pyproject.toml ./
 COPY allotrope ./allotrope
 COPY scripts ./scripts
-
-# CPU-only torch: the control policy is small (128-unit MLPs), so a GPU buys
-# nothing here and would roughly 10x the image size for no benefit.
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch \
-    && pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir -e .
 
 ENTRYPOINT ["python"]
 CMD ["scripts/run_station_service.py", "--help"]

@@ -50,11 +50,14 @@ station.
 
 ## Status
 
-All five phases are code-complete. Phases 1–4 are backed by a full test suite
-run in development; Phase 5's infrastructure (the container stack, Grafana
-against real data) has not been started end to end in that environment — see
-[docs/PROJECT_BIBLE.md §11](docs/PROJECT_BIBLE.md) for exactly which claims
-that covers and which it doesn't.
+All five phases are done, including the container stack — `docker compose up`
+brought up all six services for real, with telemetry flowing plant → gRPC →
+safety projection → MQTT → TimescaleDB, confirmed by querying the database
+directly rather than trusting `docker ps`. See
+[docs/PROJECT_BIBLE.md §11](docs/PROJECT_BIBLE.md) for exactly what that run
+proved and what it didn't (Grafana's panels weren't visually inspected in a
+browser, and it used the rule-based controller rather than a trained
+checkpoint).
 
 | Component | State |
 |---|---|
@@ -67,7 +70,7 @@ that covers and which it doesn't.
 | Federated learning across stations (FedAvg) | mechanism done and tested; a real 30-round run **did not beat** the single-station agents — see below |
 | gRPC actuation interface | done |
 | MQTT telemetry link, TimescaleDB bridge | done |
-| Containers, Grafana HMI | code written, **not run end to end** in this environment |
+| Containers, Grafana HMI | **done — run end to end**, real telemetry confirmed in TimescaleDB |
 
 ## Results so far
 
@@ -230,9 +233,8 @@ python scripts/gen_proto.py
 ```
 
 To try the full stack (plant, gRPC actuation, MQTT, TimescaleDB, Grafana) —
-written and unit-tested as described in
-[docs/PROJECT_BIBLE.md §11](docs/PROJECT_BIBLE.md), but not run end to end as
-a container stack in this repository's own development environment:
+already run end to end once, see [docs/PROJECT_BIBLE.md §11](docs/PROJECT_BIBLE.md)
+for exactly what that confirmed:
 
 ```bash
 docker compose -f deploy/docker-compose.yml up --build

@@ -14,24 +14,35 @@ Then:
 
 ## What is proven where
 
-This compose stack was written and reasoned through in a sandboxed development
-environment with the Docker **CLI** present but no running daemon --
-`docker compose up` has not been executed against it end to end. That is stated
-plainly rather than glossed over, and it is also why the project's test suite
-does not depend on this file at all:
+The full stack has been run end to end, not just written: all six containers
+started, stayed up, and moved real telemetry from a simulated plant through
+gRPC actuation, the safety projection, MQTT, and a TimescaleDB insert, queryable
+by the exact SQL the provisioned Grafana dashboard uses.
 
 | Piece | How it is actually verified |
 |---|---|
 | MQTT publish/subscribe, malformed-payload handling | `tests/test_mqtt.py`, against a real embedded MQTT broker |
 | gRPC actuation, safety projection over the wire | `tests/test_rpc.py`, client and server in-process |
 | TimescaleDB bridge SQL and error handling | `tests/test_timescale_bridge.py`, against a fake connection |
-| The full loop: plant to gRPC to MQTT to subscriber | smoke-tested manually in this environment, not in CI |
-| Grafana rendering the dashboard against real data | **not verified here** -- needs a running Postgres and Grafana |
-| The compose file's service wiring itself | `docker compose config` resolves it cleanly (correct build contexts, volumes, dependency ordering) -- but no container has actually been started, since this environment's Docker CLI has no running daemon behind it |
+| The full loop: plant to gRPC to MQTT to subscriber to TimescaleDB | **run for real**: `docker compose up`, both stations publishing, rows landing in `telemetry` with `critical_unserved_kw = 0` on every row |
+| Grafana's datasource and provisioned dashboard | **run for real**: `/api/datasources` and `/api/search` confirm the TimescaleDB datasource and "Allotrope Station Overview" dashboard both loaded; the dashboard's own panel queries (genset/load/renewable, the critical-unserved stat) return real rows when run directly against the database |
+| The compose file's service wiring | **run for real**: `docker compose ps` after several minutes shows all six containers still `Up`, no crash loop |
 
-Everything in the left column is real, tested Python. The compose file wires
-that already-correct code to real infrastructure; running it is the remaining
-step, not a rewrite.
+Two real bugs were caught only by actually starting the containers, not by
+`docker compose config` or by anything in the test suite: `protobuf` (needed by
+the generated gRPC stubs) and `psycopg` (needed by the TimescaleDB bridge) were
+both installed by hand in the development venv at some point and never added
+to `pyproject.toml`'s actual dependency list. Locally this was invisible --
+`grpcio-tools` pulls in `protobuf` as a side effect, and `psycopg` had simply
+been `pip install`ed directly into the venv and forgotten. In a fresh container
+building only from `pyproject.toml`, both services crashed on import within a
+second of starting. Fixed by declaring both as real dependencies; this is
+exactly the class of gap containerizing is supposed to surface, and it did.
+
+**What is not yet verified**: the dashboard's panels have not been visually
+inspected rendering in a browser, only confirmed to be wired to a working
+datasource with queries that return correct data against it. That is a much
+smaller gap than "the stack has never been started" was.
 
 ## Services
 
@@ -44,8 +55,7 @@ step, not a rewrite.
 
 ## Running a station without Docker
 
-Every piece also runs as a plain Python process, which is how it was actually
-exercised during development:
+Every piece also runs as a plain Python process:
 
 ```bash
 # broker (needs mosquitto installed, or point --mqtt-host at any broker)

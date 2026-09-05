@@ -15,7 +15,7 @@ Last updated: 2026-09-05, end of Phase 5 (autonomous overnight session).
 |---|---|
 | Repo | https://github.com/Dang-ctrl/Allotrope (public, `main`) |
 | Local | `E:\CODE\Allotrope` |
-| Phase | **5 of 5 code-complete** — see caveats below; not everything is tested to the same depth |
+| Phase | **5 of 5, and the container stack has been run for real** — see caveats below |
 | Tests | 204 passing |
 | Commits | `db4b9ab` Plant · `6d42c9b` Guarantee · `d0f9ca9` Docs · `14e4303` Agents · `6f11585` Twin · `ca028cf` System · `c35a68a` Phase 3 results · `8866e8d` Federated checkpoint fix |
 
@@ -43,14 +43,20 @@ broker rather than a mock).
   that imports `opendssdirect` (a cosmetic fault-handler registration in that
   library) even when every test passes with exit code 0. **This is benign** —
   check the actual pass/fail summary line, not the presence of a traceback.
-- Docker CLI is present on this machine but **the daemon is not running**
-  (Docker Desktop not started). `deploy/docker-compose.yml` has not been
-  exercised end to end for that reason — see `deploy/README.md` for exactly
-  which pieces are and are not verified.
-- No `mosquitto` binary and no live Postgres/TimescaleDB in this environment.
-  MQTT is tested against an embedded `amqtt` broker (real protocol, no
-  external service); the TimescaleDB bridge is tested against a fake
-  connection object (real SQL-building logic, no real database).
+- **Docker Desktop works on this machine and the full stack has been run.**
+  It is flaky under a heavy first build, though: a `docker compose up --build`
+  once appeared to hang for 20+ minutes and the daemon started returning 500s
+  on every API call (`docker version` included) mid-build. The build had
+  actually completed successfully by the time it finished, but the daemon
+  itself had crashed and needed Docker Desktop restarted manually before
+  `docker compose up -d` would work again. If this happens again: check
+  whether the build log actually shows completion before assuming it's stuck,
+  but be ready to just restart Docker Desktop.
+- No `mosquitto` binary and no live Postgres/TimescaleDB *outside containers*
+  in this environment, which is why the test suite still uses an embedded
+  `amqtt` broker for MQTT tests and a fake connection for the TimescaleDB
+  bridge tests — those remain the CI-safe path. The real broker and database
+  only exist inside the Docker stack.
 
 ## What exists (additions since Phase 2)
 
@@ -138,10 +144,17 @@ Read `deploy/README.md`'s table before quoting anything about the deployment
 stack. Short version: gRPC actuation, MQTT pub/sub (including malformed-payload
 handling), and the TimescaleDB bridge's SQL logic are **genuinely tested** —
 39 tests across `test_rpc.py`, `test_mqtt.py`, `test_timescale_bridge.py`.
-The `docker-compose.yml` stack itself has **not been run** (no Docker daemon
-here) and Grafana rendering real data has **not been verified** (no Postgres
-here). Both are real, reasonable infrastructure code; neither is proven to
-work end to end by anything in this session.
+**Update: the stack was run for real** once Docker Desktop was available. All
+six containers came up, and real telemetry flowed plant -> gRPC -> safety
+projection -> MQTT -> TimescaleDB, confirmed by querying the `telemetry` table
+directly (66+ rows per station after a few minutes, `critical_unserved_kw = 0`
+on every one) and by running the Grafana dashboard's own panel queries against
+that data. Two real bugs were caught only by this: `protobuf` and `psycopg`
+were both usable locally only because they'd been installed by hand into the
+dev venv at some point and were never in `pyproject.toml` -- both station
+containers and the bridge container crashed on import within a second of
+starting in a fresh build. Fixed by declaring both as real dependencies. See
+`deploy/README.md` for the full verification table.
 
 ## Open questions and known gaps
 

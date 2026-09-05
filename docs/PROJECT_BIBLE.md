@@ -92,11 +92,13 @@ on station.
 | 2 | The guarantee — safety projection, fallback, Gymnasium env, reward | **done** |
 | 3 | The agents — DQN + SDDPG, training, checkpointing, federated averaging | **done** |
 | 4 | The twin — OpenDSS network, Volt-VAr / Volt-Watt fallback | **done** |
-| 5 | The system — gRPC actuation, MQTT telemetry, TimescaleDB, Grafana, containers | **code-complete; infra untested here — see §10** |
+| 5 | The system — gRPC actuation, MQTT telemetry, TimescaleDB, Grafana, containers | **done, container stack run end to end — see §11** |
 
 Phases 3–5 were built in one autonomous session (2026-09-05) at the user's
-request, without further confirmation between steps. Section 10 states plainly
-which parts of that work are backed by tests run in this environment and which
+request, without further confirmation between steps; the container stack was
+verified for real in a follow-up session the same day once Docker Desktop was
+available. Section 11 states plainly which parts of that work are backed by
+tests run in this environment, which by an actual container run, and which
 are infrastructure code that has not been exercised end to end.
 
 ## 4. Design decisions, and why
@@ -515,10 +517,10 @@ a mock of the protocol, including a payload deliberately corrupted to confirm
 the subscriber drops it rather than crashing.
 
 **The TimescaleDB bridge** (`allotrope/mqtt/timescale_bridge.py`): turns each
-telemetry message into a row. Tested against a fake connection object, since
-no live TimescaleDB exists in this environment — what is actually verified is
-that the bridge builds the right SQL for a given telemetry dict and survives a
-broken connection without taking the subscriber down.
+telemetry message into a row. Unit-tested against a fake connection object
+(builds the right SQL, survives a broken connection without taking the
+subscriber down) and, separately, run for real inside the container stack —
+see below.
 
 **Federated learning across stations** (`allotrope/agents/federated.py`):
 FedAvg — each site trains locally for a round, then only the resulting network
@@ -566,22 +568,50 @@ count — see [../context.md](../context.md) for the current number):
 - The MQTT telemetry path end to end against a real (embedded) broker,
   including malformed-payload handling.
 - The trained agent's held-out evaluation numbers in §8.
+- **The full container stack, run for real**: `docker compose up` brought up
+  all six services (mosquitto, TimescaleDB, Grafana, the bridge, both
+  stations), which stayed up without crash-looping. Both stations' simulated
+  plants dispatched over gRPC, the safety projection ran on every command, and
+  telemetry landed in TimescaleDB — confirmed by querying the `telemetry`
+  table directly (`critical_unserved_kw = 0` on every one of 66+ rows per
+  station after a few minutes) rather than by trusting `docker ps`. Grafana's
+  provisioned datasource and dashboard were confirmed loaded via its own API
+  (`/api/datasources`, `/api/search`), and the dashboard's actual panel
+  queries were run directly against the database and returned correct rows.
 
-**Infrastructure code, not exercised end to end here:**
+**Two real bugs were caught only by running the containers**, not by any test
+or by `docker compose config`: `protobuf` (needed by the generated gRPC stubs)
+and `psycopg` (needed by the TimescaleDB bridge) were both usable in the
+development venv only because they had been installed there by hand at some
+point — `grpcio-tools` pulls in `protobuf` as a side effect, and `psycopg` had
+simply been `pip install`ed directly and never added to `pyproject.toml`.
+Neither was ever a declared dependency. In a fresh container built only from
+`pyproject.toml`, both `station-maitri`/`station-bharati` and `bridge` crashed
+on import within a second of starting. Fixed by declaring both as real
+dependencies. This is exactly the class of gap a local dev venv hides and a
+clean container build surfaces, and it is why "the compose file resolves" and
+"the compose file runs" are different claims — only the second one holds now.
 
-- `deploy/docker-compose.yml` — this environment has the Docker CLI but no
-  running daemon. The stack has not been started.
-- Grafana actually rendering the provisioned dashboard against real data — no
-  Postgres/TimescaleDB was running here to render it against.
-- The TimescaleDB bridge's SQL against an actual TimescaleDB — tested against
-  a fake connection only (see §10).
+**Still not exercised, and stated as such:**
+
+- The Grafana dashboard's panels have not been visually inspected rendering in
+  a browser — only confirmed to be wired to a working, correctly-populated
+  datasource whose queries return correct data when run directly.
 - The Volt-VAr/Volt-Watt fallback and `DeterministicFallback` are not wired
   into one combined runtime path; they exist as separate, separately-tested
   mechanisms at different control layers.
+- The container run above used the rule-based `EfficientRuleBased` controller
+  (no `--checkpoint` flag), not a trained agent — the containerized path for
+  loading and serving a checkpoint has not itself been exercised.
 
-None of the above is claimed as working in production. It is claimed as
-correct, tested Python wired to real infrastructure definitions that have not
-yet been started — a smaller, more honest claim, and the true one.
+None of the above changes what Docker Desktop's own behavior was like getting
+here: a first `docker compose up --build` appeared to hang for over twenty
+minutes while the daemon returned 500 errors on every API call, including
+`docker version`. The build had in fact completed successfully by the time it
+finished; the daemon itself had crashed regardless and needed Docker Desktop
+restarted manually before anything else would work. Worth knowing if this is
+reproduced: check whether the build log shows completion before assuming a
+stuck build, but be ready for the daemon to need a restart regardless.
 
 ## 12. What this project is *not* entitled to claim
 
@@ -612,9 +642,14 @@ rather than silently dropped.
   Safety held perfectly regardless. Cite this as "the mechanism works and was
   tested end to end," not as "federated training improved the policy" —
   it did not, in the one configuration tried.
-- **Not an end-to-end infrastructure deployment.** See §11's table. Every
-  piece is real, tested Python; the containerised stack running together has
-  not been started in this environment.
+- ~~Not an end-to-end infrastructure deployment~~ — **resolved.** The full
+  container stack has been run for real: all six services up, real telemetry
+  flowing plant-to-database, Grafana's datasource and dashboard confirmed
+  loaded and queryable. Two real missing dependencies (`protobuf`, `psycopg`)
+  were found and fixed in the process — see §11. Still not claimed: the
+  dashboard's panels rendering correctly in a browser (only their underlying
+  queries were checked), and running a trained checkpoint inside a container
+  rather than the rule-based fallback.
 - **Single-station results, not a general claim about learned control at any
   polar station.** Two stations, two independently-trained checkpoints, each
   beating its own `EfficientRuleBased` baseline on fuel but by different
