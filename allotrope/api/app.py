@@ -17,19 +17,39 @@ what is deliberately not here yet and why):
     GET  /stations/{id}/telemetry
     GET  /stations/{id}/safety
     GET  /stations/{id}/controller
-    POST /stations/{id}/simulation/start
-    POST /stations/{id}/simulation/stop
-    POST /stations/{id}/simulation/reset
-    POST /stations/{id}/simulation/step
+    POST /stations/{id}/simulation/start   (requires X-API-Key)
+    POST /stations/{id}/simulation/stop    (requires X-API-Key)
+    POST /stations/{id}/simulation/reset   (requires X-API-Key)
+    POST /stations/{id}/simulation/step    (requires X-API-Key)
+
+Authentication: the four `POST` endpoints above are the closest thing this
+system has to an actuator surface -- they control the simulation loop a
+"live" deployment of this API would be observing -- and are the ones this
+project's own adversarial audit (F4) flagged as reachable without any
+credential at all. They now require an `X-API-Key` header matching
+`app.state.api_key`. Read-only `GET` endpoints stay open: this is a
+single-tenant demo/simulation backend with no per-user data to protect,
+and gating every read behind the same key would just push the secret into
+the frontend bundle -- making the frontend the security boundary, which
+this project treats as a standing rule to avoid rather than a convenience
+to take. `ALLOTROPE_API_KEY` sets the key explicitly (for a real
+deployment); if unset, `create_app()` generates one and logs it once at
+startup, the same pattern Jupyter's notebook server uses -- so nothing is
+ever hardcoded, and there is no unauthenticated default the way there was
+before this change.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hmac
+import logging
+import os
+import secrets
 import time
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -38,6 +58,13 @@ from allotrope.api.simulation import StationSimulation, build_simulation
 
 DEFAULT_STEP_INTERVAL_S = 0.25
 """Wall-clock seconds between steps in an auto-running simulation loop."""
+
+MAX_TELEMETRY_LAST = 10_000
+"""Upper bound on `?last=` for the telemetry endpoint (F14): without one, a
+single request can force serialisation of the entire in-memory telemetry
+buffer, a cheap and repeatable memory/CPU amplification."""
+
+_logger = logging.getLogger("allotrope.api")
 
 
 class SimulationManager:
@@ -90,7 +117,10 @@ class StartRequest(BaseModel):
     interval_s: float = Field(default=DEFAULT_STEP_INTERVAL_S, gt=0.0, le=60.0)
 
 
-def create_app() -> FastAPI:
+def create_app(api_key: str | None = None) -> FastAPI:
+    """Build the app. `api_key` is exposed as a parameter (rather than only
+    read from the environment) so tests can construct an app with a known
+    key without setting process-wide environment state."""
     app = FastAPI(
         title="Allotrope",
         description=(
@@ -108,6 +138,23 @@ def create_app() -> FastAPI:
     manager = SimulationManager()
     app.state.manager = manager
     app.state.started_at = time.monotonic()
+
+    app.state.api_key = api_key or os.environ.get("ALLOTROPE_API_KEY")
+    if not app.state.api_key:
+        app.state.api_key = secrets.token_urlsafe(32)
+        _logger.warning(
+            "ALLOTROPE_API_KEY not set -- generated a key for this process only: %s "
+            "(set ALLOTROPE_API_KEY to use a stable one across restarts)",
+            app.state.api_key,
+        )
+
+    def require_api_key(x_api_key: str | None = Header(default=None)) -> None:
+        """Guards the simulation-control endpoints (F4 from the adversarial
+        audit) -- the closest thing this API has to an actuator surface.
+        `hmac.compare_digest` avoids leaking the key length/prefix via a
+        timing side channel."""
+        if not x_api_key or not hmac.compare_digest(x_api_key, app.state.api_key):
+            raise HTTPException(status_code=401, detail="missing or invalid X-API-Key")
 
     @app.get("/health")
     def health() -> dict[str, Any]:
@@ -150,6 +197,8 @@ def create_app() -> FastAPI:
 
     @app.get("/stations/{station_id}/telemetry")
     def get_telemetry(station_id: str, last: int | None = None) -> list[dict[str, Any]]:
+        if last is not None:
+            last = min(last, MAX_TELEMETRY_LAST)
         return manager.get(station_id).telemetry(last_n=last)
 
     @app.get("/stations/{station_id}/metrics")
@@ -164,23 +213,23 @@ def create_app() -> FastAPI:
     def get_controller(station_id: str) -> dict[str, Any]:
         return manager.get(station_id).controller_status()
 
-    @app.post("/stations/{station_id}/simulation/start")
+    @app.post("/stations/{station_id}/simulation/start", dependencies=[Depends(require_api_key)])
     async def start_simulation(station_id: str, body: StartRequest = StartRequest()) -> dict[str, Any]:
         manager.get(station_id)  # 404s before scheduling a task for a bad id
         await manager.start(station_id, body.interval_s)
         return manager.get(station_id).state()
 
-    @app.post("/stations/{station_id}/simulation/stop")
+    @app.post("/stations/{station_id}/simulation/stop", dependencies=[Depends(require_api_key)])
     async def stop_simulation(station_id: str) -> dict[str, Any]:
         await manager.stop(station_id)
         return manager.get(station_id).state()
 
-    @app.post("/stations/{station_id}/simulation/reset")
+    @app.post("/stations/{station_id}/simulation/reset", dependencies=[Depends(require_api_key)])
     async def reset_simulation(station_id: str) -> dict[str, Any]:
         await manager.reset(station_id)
         return manager.get(station_id).state()
 
-    @app.post("/stations/{station_id}/simulation/step")
+    @app.post("/stations/{station_id}/simulation/step", dependencies=[Depends(require_api_key)])
     def step_simulation(station_id: str) -> dict[str, Any]:
         sim = manager.get(station_id)
         if sim.running:

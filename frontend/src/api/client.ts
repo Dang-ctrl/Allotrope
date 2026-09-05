@@ -19,6 +19,18 @@ import type {
 export const API_BASE_URL: string =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://localhost:8000";
 
+// The backend's simulation-control endpoints (start/stop/reset/step) now
+// require an X-API-Key header -- see allotrope/api/app.py's module
+// docstring for why. This is a credential the frontend holds, the same way
+// any single-page app holds a bearer token; the *enforcement* is entirely
+// server-side (FastAPI rejects the request), so this does not make the
+// frontend the security boundary -- it only means a locally-run demo needs
+// its operator to configure the same key on both sides. There is
+// deliberately no default here: an unset key just means the four control
+// buttons get a 401 until VITE_API_KEY is set to match the backend's
+// ALLOTROPE_API_KEY (or the key the backend logged at startup).
+const API_KEY: string | undefined = import.meta.env.VITE_API_KEY as string | undefined;
+
 export class ApiError extends Error {
   status: number;
   path: string;
@@ -33,7 +45,10 @@ export class ApiError extends Error {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE_URL}${path}`, {
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(API_KEY ? { "X-API-Key": API_KEY } : {}),
+    },
     ...init,
   });
   if (!res.ok) {

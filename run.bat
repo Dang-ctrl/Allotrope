@@ -29,8 +29,20 @@ if not exist "frontend\node_modules" (
     exit /b 1
 )
 
+REM The four simulation-control endpoints require an API key (see
+REM docs/api.md's "Authentication"). Generate one per launch and hand the
+REM same value to both the backend and the frontend, rather than leaving
+REM either side to fall back to a key the other side doesn't know --
+REM without this, the Command Center's start/stop/reset/step buttons would
+REM all get a 401.
+for /f %%k in ('powershell -NoProfile -Command "[guid]::NewGuid().ToString('N')"') do set ALLOTROPE_API_KEY=%%k
+(
+    echo VITE_API_BASE_URL=http://localhost:8000
+    echo VITE_API_KEY=%ALLOTROPE_API_KEY%
+) > "%REPO_DIR%frontend\.env.local"
+
 echo Starting backend (uvicorn) on http://127.0.0.1:8000 ...
-start "Allotrope backend" cmd /k ".venv\Scripts\activate.bat && uvicorn allotrope.api.app:app --reload --host 127.0.0.1 --port 8000"
+start "Allotrope backend" cmd /k "set ALLOTROPE_API_KEY=%ALLOTROPE_API_KEY% && .venv\Scripts\activate.bat && uvicorn allotrope.api.app:app --reload --host 127.0.0.1 --port 8000"
 
 echo Starting frontend (vite) on http://127.0.0.1:5173 ...
 start "Allotrope frontend" cmd /k "cd /d "%REPO_DIR%frontend" && npm run dev -- --host 127.0.0.1 --port 5173"

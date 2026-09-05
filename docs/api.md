@@ -17,6 +17,20 @@ uvicorn allotrope.api.app:app --reload
 Interactive docs (from FastAPI's own OpenAPI generation, not written by
 hand) at `http://localhost:8000/docs`.
 
+## Authentication
+
+Found unauthenticated in this project's own adversarial audit (F4): the
+four `POST /stations/{id}/simulation/*` endpoints below are the closest
+thing this API has to an actuator surface, and previously had no
+credential requirement at all. They now require an `X-API-Key` header.
+Set `ALLOTROPE_API_KEY` before starting the process; if it's unset, one is
+generated and logged once at startup (the same pattern Jupyter's notebook
+server uses), so there is never a silently-open control endpoint. `GET`
+endpoints stay unauthenticated by design -- see `allotrope/api/app.py`'s
+module docstring for why gating every read the same way would just move
+the credential into the frontend bundle. The frontend reads its copy of
+the key from `VITE_API_KEY` (`frontend/.env.example`).
+
 ## What's here
 
 One `StationSimulation` per configured station (`maitri`, `bharati`) lives
