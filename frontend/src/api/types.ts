@@ -77,7 +77,12 @@ export interface SafetyReport {
   interventions: string[];
   required_capacity_kw: number;
   committed_capacity_kw: number;
-  detail: Record<string, number>;
+  // allotrope/safety/projection.py's Report.as_dict() spreads `detail`'s
+  // keys directly into this object (**self.detail) rather than nesting
+  // them under a "detail" key, so there is no such field on the wire --
+  // an earlier version of this type claimed one existed. Extra keys land
+  // here as an untyped bag: nothing in this app currently reads them.
+  [extra: string]: unknown;
 }
 
 export interface VoltageStatus {
