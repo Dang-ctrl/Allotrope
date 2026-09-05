@@ -741,6 +741,29 @@ Worth recording for the same reason as the projection layer's pairwise-vs-joint
 bug in §6: it passed every test that existed, because no test had ever taken
 the broker away and given it back.
 
+### The scenario explorer, inside the same UI
+
+`webapp/frontend/src/scenarios/` adds a second top-level view — a
+`SegmentedControl` in the top nav switches between "Live" and "Scenarios" — so
+the same four played-back simulations already published as a standalone
+Claude Artifact (see [context.md](../context.md), "Judge-facing artifacts")
+are also reachable without leaving the live dashboard. It reads a static copy
+of `scripts/generate_scenarios.py`'s output
+(`webapp/frontend/public/scenarios.json`), not live data, and is not wired to
+regenerate automatically — regenerating the script's output means re-copying
+the file by hand.
+
+**A real bug, caught before it shipped**: the grid-stress view initially
+displayed `curtailPv`/`curtailWind` directly as "% curtailed". Those fields
+are actually the *fraction of power still allowed through*
+(`allotrope/network/twin.py`'s `curtailment_fraction`; 1.0 means no
+curtailment) — their own opposite. At the multiplier level the data itself
+labels "no intervention needed", the first version of the page read "PV
+curtail 100%". Fixed to display the complement, and checked against the raw
+JSON that the corrected percentages climb monotonically from 0% to 100% and
+turn non-zero at exactly the multiplier where `intervened` first lists that
+bus.
+
 ## 14. Maintenance
 
 Update this document whenever the architecture, parameters, results, roadmap or
