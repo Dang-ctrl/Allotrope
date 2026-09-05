@@ -38,45 +38,52 @@ Two properties are not negotiable and are built in rather than trained in:
 - **The safety projection layer** bounds every action analytically. The agent
   cannot breach life-support power or heating limits, whatever it has learned.
 - **A deterministic fallback** takes over instantly if the networks time out,
-  raise, or return invalid tensors — implemented and audited at the dispatch
-  level (`allotrope.safety.fallback`). The inverter-level Volt-VAr / Volt-Watt
-  curves that act on voltage now also exist (`allotrope.network.twin`), run
-  against the OpenDSS network twin; the two are not yet merged into one
-  combined runtime path.
+  raise, or return invalid tensors. At the dispatch level it is implemented and
+  audited today. Inverter-level Volt-**Watt** curtailment now runs on top of
+  it for a station with a network model (Maitri), against a real single-feeder
+  OpenDSS twin — see [docs/network-safety.md](docs/network-safety.md). Volt-VAr
+  does not exist: it needs a reactive-power balance this project's plant
+  doesn't model, and that document says so rather than implying otherwise.
 
-Only model parameters cross the station's 4 MHz satellite link during
-federated training (`allotrope.agents.federated`); all inference runs on
-station.
+Only model gradients cross the station's 4 MHz satellite link; all inference runs
+on station.
 
 ## Status
 
-All five phases are done, including the container stack — `docker compose up`
-brought up all six services for real, with telemetry flowing plant → gRPC →
-safety projection → MQTT → TimescaleDB, confirmed by querying the database
-directly rather than trusting `docker ps`. See
-[docs/PROJECT_BIBLE.md §11](docs/PROJECT_BIBLE.md) for exactly what that run
-proved and what it didn't (Grafana's panels weren't visually inspected in a
-browser, and it used the rule-based controller rather than a trained
-checkpoint).
+Phase 1 (**the plant**) and Phase 2 (**the guarantee**) are complete. Phase 3
+(**the agents**) is implemented, safety-integrated and tested. A 500k-step
+training run cut genset starts by 48% and closed 58% of the fuel gap to the
+best rule-based baseline versus an earlier 60k-step run — real progress, not
+yet a win: still behind `EfficientRuleBased` on fuel and starts. See
+[docs/reinforcement-learning.md](docs/reinforcement-learning.md)'s "Honest
+status" for the full numbers, including a real regression (unmet water) this
+run surfaced.
 
 | Component | State |
 |---|---|
 | Station configuration (Maitri, Bharati) | done |
-| Synthetic polar climate, demand model, asset models | done |
-| Two-bus plant simulator, rule-based baselines | done |
-| Safety projection layer, deterministic fallback, Gymnasium env | done |
-| DQN + SDDPG agents, training, checkpointing | done — see results below |
-| OpenDSS network twin, Volt-VAr / Volt-Watt fallback | done |
-| Federated learning across stations (FedAvg) | mechanism done and tested; a real 30-round run **did not beat** the single-station agents — see below |
-| gRPC actuation interface | done |
-| MQTT telemetry link, TimescaleDB bridge | done |
-| Containers, Grafana HMI | **done — run end to end**, real telemetry confirmed in TimescaleDB |
+| Synthetic polar climate — solar geometry, irradiance, wind, temperature | done |
+| Demand model — electrical, thermal, deferrable | done |
+| Asset models — gensets, dual-chemistry storage, PV, wind | done |
+| Two-bus plant simulator with CHP and boiler coupling | done |
+| Rule-based baselines — legacy N+1 and efficient | done |
+| Safety projection layer and deterministic fallback | done |
+| Gymnasium environment and reward | done |
+| Branching DQN (commitment) + SDDPG (dispatch), safety-integrated | implemented and tested; see [docs/reinforcement-learning.md](docs/reinforcement-learning.md) |
+| Local experiment tracking (`allotrope/experiment.py`, `runs/`) | done |
+| Backend API over the live simulation — see [docs/api.md](docs/api.md) | implemented and tested; the live default controller is still rule-based, not a trained checkpoint (`allotrope.api.simulation.default_controller`); simulation-control endpoints now require an API key (found unauthenticated in this project's own adversarial audit) — read endpoints stay open by design |
+| Scenario benchmark across many seeds — see [docs/evaluation.md](docs/evaluation.md) | implemented for weather/demand variation; asset-failure and sensor-fault scenarios not yet built |
+| Structured logging — see [docs/observability.md](docs/observability.md) | implemented for the API/simulation loop; training/evaluation CLIs and a metrics endpoint not yet wired |
+| Frontend Command Center — see [frontend/README.md](frontend/README.md) | one real screen against live API data; no browser/E2E test tool was available to verify it visually, only build/type-check/component tests and manual curl checks against a live server pair |
+| OpenDSS network twin + inverter-level Volt-Watt — see [docs/network-safety.md](docs/network-safety.md) | implemented and tested for Maitri (single-feeder, real OpenDSS power flow); Bharati has no network config yet; Volt-VAr not implemented (needs reactive-power modelling the plant doesn't have) |
+| gRPC control plane — see [docs/control-plane.md](docs/control-plane.md) | implemented and tested (state distribution + heartbeat, real server/client, real robustness cases); no command-injection RPC by design; every RPC now requires a token (found unauthenticated in this project's own adversarial audit) and `StreamState` is concurrency-capped against a worker-pool DoS the same audit reproduced; still no TLS and no MQTT (documented why) |
+| Federated learning across stations — see [docs/federated-learning.md](docs/federated-learning.md) | real FedAvg over network tensors, validation + rollback, tested; run for a handful of rounds as a smoke test, not to convergence or a competitive claim |
+| MQTT telemetry link + TimescaleDB bridge — `allotrope/mqtt/`, `deploy/` | implemented and tested (real embedded-broker pub/sub, fake-connection SQL); Docker Compose stack (mosquitto, TimescaleDB, Grafana, per-station containers) written but not run end to end in this environment — see [deploy/README.md](deploy/README.md) for exactly which piece is proven where |
 
 ## Results so far
 
-A synthetic year, hourly, seed 0 — reproduce with `python scripts/run_baseline.py --station <maitri|bharati>`:
-
-**Maitri**
+A synthetic year at Maitri, hourly, seed 0 — reproduce with
+`python scripts/run_baseline.py`:
 
 | | Legacy N+1 | Efficient rules |
 |---|---|---|
@@ -84,74 +91,16 @@ A synthetic year, hourly, seed 0 — reproduce with `python scripts/run_baseline
 | Black carbon | 72 324 g | 11 190 g |
 | Mean genset load factor | **26.5 %** | 52.2 % |
 | Steps wet-stacking | **80.6 %** | 2.3 % |
+| Mean deposit level | **1.00** | 0.00 |
 | Renewable fraction | 15.8 % | 16.1 % |
 | Life-support energy unserved | 0 | 0 |
-
-**Bharati** — also the calibration check, since 264.2 kL against a published
-296 kL seasonal budget is the strongest validation available without station
-telemetry:
-
-| | Legacy N+1 | Efficient rules |
-|---|---|---|
-| Fuel | 264.2 kL | 204.4 kL |
-| Black carbon | 95 251 g | 39 889 g |
+| Freeze violations | 0 | 0 |
 
 The incumbent reproduces the problem the project exists to solve: a fleet
 loitering at a quarter of its rating, wet-stacking four steps in five, deposits
-saturated. Disciplined rules alone recover 15.9–22.6 % of the fuel and
-58–84.5 % of the black carbon depending on station — deliberately leaving
-headroom, because a baseline that already captured everything would leave the
-learned agent nothing to demonstrate.
-
-### The learned agent
-
-`HybridAgent` (DQN + SDDPG), evaluated on **held-out seeds** (100–104,
-disjoint from every training seed) the policy never trained on —
-`python scripts/evaluate_agent.py --station <maitri|bharati> --checkpoint checkpoints/<station>.pt`:
-
-| | Efficient rules | **Hybrid DQN + SDDPG** |
-|---|---|---|
-| **Maitri** fuel | 213.4 kL | **209.6 kL** (−1.8 %) |
-| Maitri black carbon | **10 617 g** | 15 931 g |
-| Maitri genset starts/year | 272.2 | **210.0** (−22.9 %) |
-| **Bharati** fuel | 205.4 kL | **193.8 kL** (−5.6 %) |
-| Bharati black carbon | 40 654 g | 40 722 g (flat) |
-| Bharati genset starts/year | 140.0 | **14.8** (−89 %) |
-| Life support unserved, every held-out seed, both stations | 0 | **0** |
-
-The agent beats the rule-based bar it was built to clear at both stations —
-less fuel in each case — but finds a *different* trade-off at each one. At
-Maitri it cuts starts by 23 % and trades away some black-carbon performance;
-at Bharati it nearly eliminates cycling (14.8 starts/year, close to the
-incumbent's own habits) while holding black carbon flat. Neither trade is a
-bug: `RewardWeights` prices fuel and starts more heavily than black carbon in
-absolute terms, so both policies are optimising the same stated objective,
-just landing at different points its trade-off surface allows. Report both
-numbers, not only the more flattering one.
-
-### Federated training — a negative result, reported as one
-
-`scripts/run_federated.py`, 30 rounds × 15 local episodes per station, FedAvg
-across Maitri and Bharati simultaneously. Evaluated the same way as above:
-
-| | Efficient rules | **Federated** |
-|---|---|---|
-| Maitri fuel | 213.4 kL | 225.3 kL (**+5.6 %**, worse) |
-| Bharati fuel | 205.4 kL | 210.1 kL (**+2.3 %**, worse) |
-| Life support unserved, both stations, every seed | 0 | **0** |
-
-The federated policy does not beat `EfficientRuleBased` at either station, and
-underperforms each station's own dedicated single-agent checkpoint above by a
-wide margin. The training log shows why: reward fluctuates across all 30
-rounds with no visible convergence trend, consistent with FedAvg client drift
-— each site gets only 15 local episodes to adapt before its weights are
-averaged back toward the other site's differently-adapted ones. The safety
-guarantee holds exactly as well as everywhere else in this project regardless
-of training quality, which is the one property that has to be true here no
-matter what. The mechanism itself is real and tested end to end
-(`tests/test_federated.py`); this particular training configuration simply
-does not yet produce a policy worth deploying, and that is reported plainly
-rather than tuned until the number looked better.
+saturated. Disciplined rules alone recover 15.9 % of the fuel and 84.5 % of the
+black carbon — deliberately leaving headroom, because a baseline that already
+captured everything would leave the learned agent nothing to demonstrate.
 
 ## The safety guarantee
 
@@ -180,15 +129,14 @@ nothing. The projection also survives NaN and infinity in every field, commands
 of the wrong length, agents that raise, and agents that exceed the 10 ms control
 budget — a late answer being treated as a wrong answer.
 
-One honest caveat remains: the freeze column is zero in *both* conditions,
-because the auxiliary boilers protect the heat supply independently of the
-controller, so the freeze guarantee is real but still untested by these
-attacks. The other caveat this section used to carry — that Volt-VAr/Volt-Watt
-couldn't exist yet because the plant had no voltage in it — is resolved: an
-OpenDSS network twin now exists (`allotrope/network/twin.py`), with a tested,
-working two-stage Volt-VAr/Volt-Watt fallback. It runs alongside, not yet
-merged into, `DeterministicFallback`'s dispatch-level logic — see
-[docs/PROJECT_BIBLE.md §9](docs/PROJECT_BIBLE.md) for the detail.
+Two honest caveats. The freeze column is zero in *both* conditions, because the
+auxiliary boilers protect the heat supply independently of the controller; the
+freeze guarantee is therefore real but currently untested by these attacks.
+And the deterministic fallback here is dispatch logic — voltage doesn't
+exist in this power-balance model, which is why it took a separate network
+twin and inverter layer (Maitri only so far) to add Volt-Watt curtailment;
+see [docs/network-safety.md](docs/network-safety.md) for what that covers
+and what it still doesn't (Volt-VAr).
 
 One bug found and fixed during this work is worth recording, because it is the
 kind that survives casual review: the projection originally checked each machine
@@ -214,30 +162,7 @@ python scripts/run_safety_audit.py --station maitri --days 30
 ```
 
 ```bash
-python scripts/train_agent.py --station maitri --episodes 500 --out checkpoints/maitri.pt
-python scripts/evaluate_agent.py --station maitri --checkpoint checkpoints/maitri.pt
-```
-
-```bash
 python -m pytest
-```
-
-`torch` installs CPU-only by default (`pip install -e ".[dev]"` above does not
-pull CUDA). The networks are small — 128-unit MLPs over a 25-dimensional
-observation — and gain nothing from a GPU at this problem size.
-
-To regenerate the gRPC stubs after editing `allotrope/rpc/allotrope.proto`:
-
-```bash
-python scripts/gen_proto.py
-```
-
-To try the full stack (plant, gRPC actuation, MQTT, TimescaleDB, Grafana) —
-already run end to end once, see [docs/PROJECT_BIBLE.md §11](docs/PROJECT_BIBLE.md)
-for exactly what that confirmed:
-
-```bash
-docker compose -f deploy/docker-compose.yml up --build
 ```
 
 ## Layout
@@ -246,16 +171,24 @@ docker compose -f deploy/docker-compose.yml up --build
 allotrope/
   config/        station YAML and its typed, validated loader
   synth/         synthetic climate and demand generation
-  sim/           asset models, the plant, the episode runner
+  sim/           asset models, the plant, the episode runner, the OpenDSS network twin
   control/       rule-based baselines
-  safety/        the projection layer and the deterministic fallback
+  safety/        the projection layer, the deterministic fallback, GuardedController,
+                 inverter-level Volt-Watt (see docs/network-safety.md)
   envs/          the Gymnasium environment and the reward
-  agents/        DQN + SDDPG, training, checkpointing, federated averaging
-  network/       the OpenDSS twin and the Volt-VAr / Volt-Watt fallback
-  rpc/           the gRPC actuation interface (proto + server + client)
-  mqtt/          telemetry pub/sub and the TimescaleDB bridge
-deploy/          Dockerfile, docker-compose, Grafana provisioning, DB schema
-docs/            calibration, design notes, and the project bible
+  agents/        BranchingDQN, SDDPG, HybridAgent, the replay buffer
+  train.py       training CLI: python -m allotrope.train --agent {dqn,sddpg,hybrid}
+  evaluate.py    evaluation CLI: python -m allotrope.evaluate --checkpoint ...
+  evaluate_scenarios.py  many-seed statistical evaluation, see docs/evaluation.md
+  experiment.py  local, file-based experiment tracking (runs/<run_id>/record.json)
+  observability.py  structured JSON logging, see docs/observability.md
+  api/           FastAPI backend over the live simulation, see docs/api.md
+  controlplane/  gRPC state distribution + heartbeat, see docs/control-plane.md
+  federated/     FedAvg across stations, validation + rollback, see docs/federated-learning.md
+  mqtt/          telemetry publish/subscribe + TimescaleDB bridge
+frontend/        React/TypeScript Command Center UI over the API, see frontend/README.md
+deploy/          Dockerfile, docker-compose.yml, Grafana/TimescaleDB provisioning, see deploy/README.md
+docs/            calibration, reinforcement learning, and other design notes
 scripts/         entry points
 tests/           invariants, including the ones the project's claims rest on
 ```
