@@ -219,6 +219,48 @@ def test_a_few_training_steps_run_without_nan_or_crashing():
             assert all(np.isfinite(v) for v in m2.values())
 
 
+def test_checkpoint_every_saves_progress_before_training_finishes(tmp_path):
+    """A run killed partway through must not lose everything.
+
+    Found the hard way: allotrope.train only wrote checkpoint.pt after the
+    full run completed, so a training process interrupted by anything
+    outside this codebase (a killed machine, not a code failure) lost every
+    step of progress with nothing to resume from. --checkpoint-every writes
+    the same file at a fixed cadence instead of only at the end.
+    """
+    from allotrope.train import train
+
+    saved_at_steps: list[int] = []
+    real_save = torch.save
+
+    def counting_save(obj, path):
+        saved_at_steps.append(obj["dqn"]["env_steps"])
+        real_save(obj, path)
+
+    import unittest.mock as mock
+
+    with mock.patch("allotrope.train.torch.save", side_effect=counting_save):
+        train(
+            agent_kind="hybrid",
+            station="maitri",
+            total_steps=20,
+            seed=0,
+            episode_steps=24,
+            warmup_steps=1,
+            buffer_capacity=50,
+            runs_dir=tmp_path,
+            checkpoint_every=5,
+        )
+
+    # Steps 5, 10, 15 from the periodic branch, plus the unconditional final
+    # save at step 20 -- four writes, not one, and each one strictly later
+    # than the last (env_steps is monotonic), so an interrupted run always
+    # has a checkpoint reflecting real, recent progress on disk.
+    assert saved_at_steps == sorted(saved_at_steps)
+    assert len(saved_at_steps) == 4
+    assert saved_at_steps[-1] == 20
+
+
 # -- the safety guarantee, for an untrained hybrid agent specifically ---------
 
 
