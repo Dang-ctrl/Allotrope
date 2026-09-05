@@ -29,6 +29,7 @@ import numpy as np
 
 from allotrope.config import StationConfig
 from allotrope.safety.projection import SafetyProjection, SafetyReport
+from allotrope.safety.voltage import InverterVoltageLayer, VoltageReport
 from allotrope.sim.plant import DispatchCommand, PolarMicrogrid
 
 
@@ -143,11 +144,40 @@ class GuardedController:
     agent: Any | None = None
     latency_budget_ms: float = 10.0
     """A late answer is a wrong answer: the gRPC control path budgets 10 ms."""
+    enforce_latency_budget: bool = True
+    """Whether exceeding `latency_budget_ms` triggers the fallback.
+
+    True (the default) is what a real, time-boxed control loop needs, and
+    is exactly what was in effect everywhere before this flag existed --
+    no deployed behaviour changes. Real-time enforcement of a wall-clock
+    budget is, by construction, a function of the machine's scheduling
+    behaviour at the moment of the call, not just of the observation and
+    the checkpoint -- and that is correct for actual control, where a slow
+    answer really is a wrong answer.
+
+    It is the wrong property for an *offline evaluation* run, though: two
+    runs of `python -m allotrope.evaluate` against the same checkpoint and
+    seed are supposed to answer "what does this policy do," not "how busy
+    was this machine while replaying it." Set this to False there (see
+    `allotrope.evaluate`) so a checkpoint's reported genset-starts, fuel,
+    and every other evaluation metric are a pure function of
+    (checkpoint, seed) again, latency is still measured and recorded in
+    `GuardStats.max_latency_ms` either way, and the projection layer still
+    runs unconditionally regardless of this flag -- only the criterion for
+    falling back to the deterministic controller changes.
+    """
+    inverter_layer: InverterVoltageLayer | None = None
+    """Inverter-level Volt-Watt curtailment (allotrope.safety.voltage), for a
+    station with a network model. None (the default) reproduces this class's
+    behaviour from before this layer existed exactly -- every existing
+    caller that doesn't pass one is unaffected. Build one with
+    `allotrope.safety.voltage.build_inverter_layer(cfg)`."""
 
     name: str = "guarded"
     stats: GuardStats = field(default_factory=GuardStats)
     last_report: SafetyReport | None = None
     last_fallback_reason: FallbackReason | None = None
+    last_voltage_report: VoltageReport | None = None
 
     def __post_init__(self) -> None:
         self.fallback = DeterministicFallback(self.cfg)
@@ -159,6 +189,7 @@ class GuardedController:
         self.stats = GuardStats()
         self.last_report = None
         self.last_fallback_reason = None
+        self.last_voltage_report = None
         for target in (self.agent, self.fallback):
             if target is not None and hasattr(target, "reset"):
                 target.reset()
@@ -176,6 +207,11 @@ class GuardedController:
         self.last_report = report
         if report.intervened:
             self.stats.projections += 1
+
+        if self.inverter_layer is not None:
+            safe, voltage_report = self.inverter_layer.apply(safe, observation)
+            self.last_voltage_report = voltage_report
+
         return safe
 
     def _propose(
@@ -194,7 +230,7 @@ class GuardedController:
 
         latency_ms = (time.perf_counter() - start) * 1000.0
         self.stats.max_latency_ms = max(self.stats.max_latency_ms, latency_ms)
-        if latency_ms > self.latency_budget_ms:
+        if self.enforce_latency_budget and latency_ms > self.latency_budget_ms:
             return None, FallbackReason.AGENT_TIMED_OUT
         if not self._is_well_formed(command):
             return None, FallbackReason.AGENT_RETURNED_INVALID

@@ -268,6 +268,177 @@ def test_a_frozen_battery_is_never_commanded_to_charge(projection_setup):
     assert Intervention.CLIPPED_BATTERY in report.interventions
 
 
+# -- corrupted OBSERVATIONS, not just corrupted actions ------------------------
+#
+# Found in this project's own adversarial audit V2: every bound above reads
+# `observation` directly, trusting it the way commands are never trusted.
+# A single NaN sensor reading -- not an adversarial action, just ordinary
+# sensor failure -- reached np.clip()'s bounds argument, produced a NaN
+# actuation command with zero recorded intervention, and permanently
+# corrupted the plant's persistent battery-SOC state with no recovery path.
+
+
+def test_a_corrupted_battery_sensor_cannot_produce_a_nan_command(projection_setup):
+    cfg, plant, projection = projection_setup
+    observation = plant.observe()
+    observation["battery_max_charge_kw"] = [float("nan")] + list(
+        observation["battery_max_charge_kw"][1:]
+    )
+
+    command = DispatchCommand(
+        genset_on=(True, True, True),
+        genset_setpoint_kw=tuple(g.rated_kw for g in cfg.gensets),
+        battery_kw=tuple(-5.0 for _ in cfg.storage),
+        snow_melt_kw=0.0,
+    )
+    safe, report = projection.project(command, observation, plant)
+    assert all(np.isfinite(p) for p in safe.battery_kw), (
+        "a corrupted sensor reached actuation as NaN -- this would permanently "
+        "corrupt the plant's persistent battery SOC with no recovery path"
+    )
+    assert Intervention.SANITISED_OBSERVATION in report.interventions
+
+
+def test_a_corrupted_renewable_sensor_cannot_bypass_the_melt_shed_bound(projection_setup):
+    """A NaN in an observation field must not silently defeat a `>` comparison
+    (NaN comparisons are always False in Python) -- specifically the bound
+    that keeps discretionary load from displacing critical load."""
+    cfg, plant, projection = projection_setup
+    observation = plant.observe()
+    observation["pv_available_kw"] = float("nan")
+    observation["critical_load_kw"] = sum(g.rated_kw for g in cfg.gensets) - 5.0
+
+    command = DispatchCommand(
+        genset_on=(True, True, True),
+        genset_setpoint_kw=tuple(g.rated_kw for g in cfg.gensets),
+        battery_kw=tuple(0.0 for _ in cfg.storage),
+        snow_melt_kw=projection.melt_ceiling_kw(),
+    )
+    safe, report = projection.project(command, observation, plant)
+    assert np.isfinite(safe.snow_melt_kw)
+    assert Intervention.SHED_MELT_FOR_CRITICAL in report.interventions, (
+        "a corrupted PV reading let the melt-shed-for-critical bound get "
+        "bypassed instead of evaluated"
+    )
+
+
+def test_a_corrupted_critical_load_reading_still_forces_full_capacity(projection_setup):
+    """The one case where a NaN observation already failed toward the safe
+    direction before this fix (force everything on) -- this locks in that
+    the *reported* required capacity is also now a real number, not NaN,
+    now that the input is sanitised rather than merely happening to fail safe."""
+    cfg, plant, projection = projection_setup
+    observation = plant.observe()
+    observation["critical_load_kw"] = float("nan")
+
+    command = DispatchCommand(
+        genset_on=(False, False, False),
+        genset_setpoint_kw=tuple(0.0 for _ in cfg.gensets),
+        battery_kw=tuple(0.0 for _ in cfg.storage),
+        snow_melt_kw=0.0,
+    )
+    safe, report = projection.project(command, observation, plant)
+    assert np.isfinite(report.required_capacity_kw)
+    assert all(safe.genset_on), "a corrupted critical-load reading must still force full capacity"
+    assert Intervention.SANITISED_OBSERVATION in report.interventions
+
+
+def test_a_missing_or_wrong_length_fleet_status_is_padded_not_crashed(projection_setup):
+    """genset_online/can_start/can_stop are read by index throughout the
+    bounds; a short list (a dropped telemetry field) must not raise."""
+    cfg, plant, projection = projection_setup
+    observation = plant.observe()
+    observation["genset_online"] = [True]  # too short for a 3-genset fleet
+    observation["genset_can_start"] = []
+    observation["genset_can_stop"] = [True, True, True]
+
+    command = DispatchCommand(
+        genset_on=(True, True, True),
+        genset_setpoint_kw=tuple(g.rated_kw for g in cfg.gensets),
+        battery_kw=tuple(0.0 for _ in cfg.storage),
+        snow_melt_kw=0.0,
+    )
+    safe, report = projection.project(command, observation, plant)
+    assert len(safe.genset_setpoint_kw) == len(cfg.gensets)
+    assert Intervention.SANITISED_OBSERVATION in report.interventions
+
+
+def test_forced_heat_start_actually_delivers_the_heat_it_commits_to(projection_setup):
+    """Committing a set for heat is not the same as letting it produce heat.
+
+    `_enforce_heat` decides which sets to force on using each set's *rated*
+    CHP output, because no setpoint exists yet at that point in the
+    pipeline. A regression here would force a set on, then leave its
+    setpoint at the electrical-only ceiling `_bound_setpoints` computes --
+    satisfying `_enforce_heat`'s own check on paper while the station is
+    still short of the heat it needs. This is the deep-cold-snap scenario
+    the module's docstring names as the reason this bound exists at all:
+    a low electrical critical load (so the electrical requirement alone
+    would never raise setpoints far) paired with firm thermal demand well
+    beyond the boiler's rating.
+    """
+    cfg, plant, projection = projection_setup
+    observation = plant.observe()
+    observation["critical_load_kw"] = 20.0
+    observation["firm_thermal_kw"] = cfg.thermal.boiler_rated_kw + 200.0
+    observation["genset_online"] = [False] * len(cfg.gensets)
+    observation["genset_can_start"] = [True] * len(cfg.gensets)
+    observation["genset_can_stop"] = [True] * len(cfg.gensets)
+
+    command = DispatchCommand(
+        genset_on=tuple(False for _ in cfg.gensets),
+        genset_setpoint_kw=tuple(0.0 for _ in cfg.gensets),
+        battery_kw=tuple(0.0 for _ in cfg.storage),
+        snow_melt_kw=0.0,
+    )
+    safe, report = projection.project(command, observation, plant)
+
+    recovered_kw = sum(
+        safe.genset_setpoint_kw[k] * cfg.gensets[k].chp_heat_ratio for k in range(len(cfg.gensets))
+    )
+    shortfall_kw = observation["firm_thermal_kw"] - cfg.thermal.boiler_rated_kw
+    assert recovered_kw >= shortfall_kw - 1e-6, (
+        f"committed {recovered_kw:.1f} kW of recoverable heat against a "
+        f"{shortfall_kw:.1f} kW shortfall -- the heat guarantee was not met"
+    )
+    assert report.detail["unmet_heat_shortfall_kw"] == pytest.approx(0.0, abs=1e-6)
+    assert Intervention.FORCED_START_FOR_HEAT in report.interventions
+    assert Intervention.RAISED_SETPOINT_FOR_HEAT in report.interventions
+
+
+def test_an_unmeetable_heat_shortfall_is_reported_not_hidden(projection_setup):
+    """When even the whole fleet at rated output cannot cover the shortfall,
+    the projection must say so rather than silently claim the guarantee holds."""
+    cfg, plant, projection = projection_setup
+    observation = plant.observe()
+    observation["critical_load_kw"] = 20.0
+    observation["firm_thermal_kw"] = cfg.thermal.boiler_rated_kw + 1_000_000.0
+    observation["genset_online"] = [False] * len(cfg.gensets)
+    observation["genset_can_start"] = [True] * len(cfg.gensets)
+    observation["genset_can_stop"] = [True] * len(cfg.gensets)
+
+    command = DispatchCommand(
+        genset_on=tuple(False for _ in cfg.gensets),
+        genset_setpoint_kw=tuple(0.0 for _ in cfg.gensets),
+        battery_kw=tuple(0.0 for _ in cfg.storage),
+        snow_melt_kw=0.0,
+    )
+    safe, report = projection.project(command, observation, plant)
+
+    max_possible_kw = sum(g.rated_kw * g.chp_heat_ratio for g in cfg.gensets)
+    shortfall_kw = observation["firm_thermal_kw"] - cfg.thermal.boiler_rated_kw
+    assert report.detail["unmet_heat_shortfall_kw"] == pytest.approx(
+        shortfall_kw - max_possible_kw, rel=1e-6
+    )
+    # Every set the fleet has should be committed and pushed to its rated output --
+    # there is nothing more this layer can do, and it should do all of it.
+    assert all(safe.genset_on)
+    assert all(
+        safe.genset_setpoint_kw[k] == pytest.approx(cfg.gensets[k].rated_kw)
+        for k in range(len(cfg.gensets))
+    )
+
+
 # -- the fallback and the guard -----------------------------------------------
 
 

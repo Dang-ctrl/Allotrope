@@ -265,17 +265,36 @@ class Battery:
         span = max(15.0 - floor, 1e-6)
         return float(np.clip(0.35 + 0.65 * (t - floor) / span, 0.0, 1.0))
 
-    def max_charge_kw(self) -> float:
-        """Charge power available now, zero when the pack is too cold to accept."""
+    def max_charge_kw(self, dt_h: float = 0.25) -> float:
+        """Charge power available now, zero when the pack is too cold to accept.
+
+        Bounded by whichever is tighter: the nameplate/thermal envelope, or
+        the energy the pack can actually absorb over one control step of
+        length `dt_h`. The second bound matters as much as the first: a pack
+        with little headroom left can accept a large *instantaneous* power
+        but not that power sustained for a full hourly step, and a caller
+        that only checked the nameplate envelope would ask for more energy
+        than physically fits. `dt_h` defaults to a quarter hour for callers,
+        such as plain unit tests, that have no step length in scope; every
+        call from the plant itself passes its own `dt_h` explicitly.
+        """
         if self.state.temperature_c < self.spec.min_operating_temp_c:
             return 0.0
         headroom_kwh = (self.spec.soc_max - self.state.soc) * self.spec.capacity_kwh
-        return max(min(self.spec.max_charge_kw * self.cold_derate(), headroom_kwh * 4.0), 0.0)
+        return max(min(self.spec.max_charge_kw * self.cold_derate(), headroom_kwh / dt_h), 0.0)
 
-    def max_discharge_kw(self) -> float:
-        """Discharge is permitted colder than charge, as the chemistry allows."""
+    def max_discharge_kw(self, dt_h: float = 0.25) -> float:
+        """Discharge is permitted colder than charge, as the chemistry allows.
+
+        See `max_charge_kw` for why `dt_h` matters: the energy-based bound
+        must reflect the length of the step the plant is actually about to
+        take, or a projection computed from this bound can authorise a
+        discharge the pack cannot sustain for the step's full duration --
+        which is exactly what leaves demand, including critical demand,
+        unmet mid-step despite having passed the safety projection.
+        """
         available_kwh = (self.state.soc - self.spec.soc_min) * self.spec.capacity_kwh
-        return max(min(self.spec.max_discharge_kw * self.cold_derate(), available_kwh * 4.0), 0.0)
+        return max(min(self.spec.max_discharge_kw * self.cold_derate(), available_kwh / dt_h), 0.0)
 
     def step(self, power_kw: float, dt_h: float) -> float:
         """Apply a power request, positive to discharge, and return what was met."""
@@ -283,14 +302,14 @@ class Battery:
         eta = spec.one_way_efficiency
 
         if power_kw >= 0.0:
-            delivered = min(power_kw, self.max_discharge_kw())
+            delivered = min(power_kw, self.max_discharge_kw(dt_h))
             drawn_kwh = delivered * dt_h / eta
             st.soc -= drawn_kwh / spec.capacity_kwh
         else:
             requested = -power_kw
-            if requested > 0.0 and self.max_charge_kw() == 0.0:
+            if requested > 0.0 and self.max_charge_kw(dt_h) == 0.0:
                 st.cold_charge_blocks += 1
-            accepted = min(requested, self.max_charge_kw())
+            accepted = min(requested, self.max_charge_kw(dt_h))
             stored_kwh = accepted * dt_h * eta
             st.soc += stored_kwh / spec.capacity_kwh
             delivered = -accepted

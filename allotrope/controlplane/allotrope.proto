@@ -1,0 +1,107 @@
+// The control-plane wire schema: telemetry/state distribution and liveness
+// over gRPC, for the low-latency path README.md's architecture diagram
+// names ("safety projection -> actuation, gRPC < 10 ms").
+//
+// Scope, stated in the schema itself rather than left to be discovered:
+// this plane distributes STATE (what the plant and its guard are doing) and
+// answers HEARTBEAT (is the controller alive, what model/version is it
+// running). It does not accept commands from a remote caller -- the
+// controller in this project (allotrope.control / allotrope.agents) runs in
+// the same process as the plant it commands, because computing a command
+// needs the full PolarMicrogrid object (see allotrope.safety.fallback.
+// GuardedController.act's signature), not a serialised subset of it. A
+// remote command-injection RPC would either have to serialise the entire
+// plant over the wire on every call (defeating the point of a low-latency
+// path) or accept commands blind, bypassing the safety projection this
+// project's central guarantee depends on. Neither is built here.
+//
+// Regenerate the Python stubs after editing this file:
+//   python -m grpc_tools.protoc -I allotrope/controlplane \
+//     --python_out=allotrope/controlplane --grpc_python_out=allotrope/controlplane \
+//     allotrope/controlplane/allotrope.proto
+
+syntax = "proto3";
+
+package allotrope.controlplane;
+
+// Data quality, attached to every StationState so a consumer never has to
+// guess whether a value is trustworthy. GOOD is the only quality a control
+// decision should be made from; STALE and INVALID mirror exactly the
+// conditions allotrope.safety.fallback.FallbackReason already names for the
+// agent side of this project -- a stale or invalid state is precisely
+// what the deterministic fallback protects a real controller against.
+enum Quality {
+  QUALITY_UNSPECIFIED = 0;
+  GOOD = 1;
+  STALE = 2;    // the simulation is not running; this state has not advanced
+  INVALID = 3;  // the simulation has reached the end of its data (plant.done)
+}
+// A station_id the server doesn't recognise at all is a NOT_FOUND gRPC
+// status, not a Quality value -- there is no "invalid station" state to
+// report, only a call that never produces one.
+
+message StationState {
+  string station_id = 1;
+  int64 sequence_number = 2;       // monotonic per station, starts at 0 on process start
+  int64 timestamp_unix_ms = 3;     // wall-clock time this state was produced (not sim time)
+  Quality quality = 4;
+  int64 sim_step = 5;              // the plant's own step_index
+  int64 sim_n_steps = 6;
+  bool sim_running = 7;
+  double electrical_load_kw = 8;
+  double critical_load_kw = 9;
+  double pv_available_kw = 10;
+  double wind_available_kw = 11;
+  repeated bool genset_online = 12;
+  repeated double genset_power_kw = 13;
+  repeated double battery_soc = 14;
+  SafetyStatus safety = 15;
+  ControllerStatus controller = 16;
+}
+
+message SafetyStatus {
+  bool intervened_last_step = 1;
+  repeated string interventions = 2;   // allotrope.safety.projection.Intervention values
+  string fallback_reason = 3;          // "" when no fallback is active
+  double fallback_rate = 4;
+  double projection_rate = 5;
+  double max_latency_ms = 6;
+}
+
+message ControllerStatus {
+  string name = 1;
+  string type = 2;             // e.g. "GuardedController"
+  string model_version = 3;    // git commit this process was built from; "" if unknown
+}
+
+message StateRequest {
+  string station_id = 1;
+}
+
+message HeartbeatRequest {}
+
+message HeartbeatResponse {
+  bool ok = 1;
+  double uptime_s = 2;
+  string model_version = 3;
+  repeated string stations = 4;
+}
+
+service ControlPlane {
+  // One state snapshot. Returns NOT_FOUND for an unknown station_id --
+  // never a default/placeholder StationState.
+  rpc GetState(StateRequest) returns (StationState);
+
+  // Server-streaming: one StationState per `interval_s` (a fixed 1 Hz push
+  // in the current server, see server.py) until the client disconnects.
+  // Reconnecting is just calling this again -- there is no session state to
+  // resume, since sequence_number always restarts from the state at call
+  // time, not from zero, so a reconnecting client can detect a gap by
+  // comparing sequence numbers itself.
+  rpc StreamState(StateRequest) returns (stream StationState);
+
+  // Liveness and version, independent of any station. What a control-plane
+  // client should poll to detect "the controller process itself is gone"
+  // before it ever gets to asking about a specific station.
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+}

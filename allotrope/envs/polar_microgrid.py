@@ -38,50 +38,6 @@ SECONDS_PER_DAY = 86_400.0
 DAYS_PER_YEAR = 365.25
 
 
-def observation_vector(
-    obs: dict, cfg: StationConfig, power_scale_kw: float, melt_ceiling_kw: float
-) -> np.ndarray:
-    """Build the normalised feature vector from a raw plant observation.
-
-    Factored out of the environment so a deployed agent can build the identical
-    vector from `plant.observe()` directly, without needing a live `gym.Env`
-    around it. Training and deployment must see the same numbers, or a policy
-    trained in one place will misbehave in the other.
-    """
-    timestamp = obs["timestamp"]
-    seconds = timestamp.hour * 3600 + timestamp.minute * 60
-    day_angle = 2.0 * np.pi * seconds / SECONDS_PER_DAY
-    year_angle = 2.0 * np.pi * timestamp.dayofyear / DAYS_PER_YEAR
-
-    features = [
-        obs["electrical_load_kw"] / power_scale_kw,
-        obs["critical_load_kw"] / power_scale_kw,
-        obs["firm_thermal_kw"] / power_scale_kw,
-        obs["pv_available_kw"] / power_scale_kw,
-        obs["wind_available_kw"] / power_scale_kw,
-        obs["air_temp_c"] / 40.0,
-        obs["wind_speed_ms"] / 25.0,
-        (obs["indoor_temp_c"] - cfg.thermal.indoor_setpoint_c) / 10.0,
-        obs["snow_melt_remaining_kwh"] / max(melt_ceiling_kw * 24.0, 1.0),
-        np.sin(day_angle),
-        np.cos(day_angle),
-        np.sin(year_angle),
-    ]
-    features += [float(v) for v in obs["genset_online"]]
-    features += [p / g.rated_kw for p, g in zip(obs["genset_power_kw"], cfg.gensets)]
-    features += [float(d) for d in obs["genset_deposit"]]
-    features += [float(s) for s in obs["battery_soc"]]
-    features += [
-        obs["battery_max_discharge_kw"][k] / max(s.max_discharge_kw, 1.0)
-        for k, s in enumerate(cfg.storage)
-    ]
-    return np.clip(np.asarray(features, dtype=np.float32), -5.0, 5.0)
-
-
-def observation_width(cfg: StationConfig) -> int:
-    return 12 + 3 * len(cfg.gensets) + 2 * len(cfg.storage)
-
-
 class PolarMicrogridEnv(gym.Env):
     """A polar station microgrid as a Gymnasium environment.
 
@@ -150,7 +106,7 @@ class PolarMicrogridEnv(gym.Env):
         return max(self.cfg.total_genset_kw, 1.0)
 
     def _observation_width(self) -> int:
-        return observation_width(self.cfg)
+        return 12 + 5 * len(self.cfg.gensets) + 2 * len(self.cfg.storage)
 
     # -- gym api ----------------------------------------------------------
 
@@ -220,7 +176,9 @@ class PolarMicrogridEnv(gym.Env):
 
     # -- action decoding --------------------------------------------------
 
-    def decode_action(self, action: dict[str, Any]) -> DispatchCommand:
+    def decode_action(
+        self, action: dict[str, Any], obs: dict[str, Any] | None = None
+    ) -> DispatchCommand:
         """Map a normalised agent action onto a physical dispatch command.
 
         Continuous values arrive in [-1, 1]. Loading fractions are mapped onto
@@ -228,6 +186,11 @@ class PolarMicrogridEnv(gym.Env):
         agent cannot express an unreachable setpoint and does not have to learn
         where the minimum stable load is -- it is a property of the machine, and
         the environment already knows it.
+
+        Accepts an already-fetched `plant.observe()` dict for the same reason
+        `_observe` does: a caller that already has one (`HybridAgent`) should
+        not have to trigger a second call to get the battery envelope this
+        needs.
         """
         genset_on = np.asarray(action["genset_on"]).astype(bool).ravel()
         dispatch = np.asarray(action["dispatch"], dtype=float).ravel()
@@ -243,7 +206,7 @@ class PolarMicrogridEnv(gym.Env):
             span = g.rated_kw - g.min_stable_kw
             setpoints.append(g.min_stable_kw + span * (loading[k] + 1.0) / 2.0)
 
-        observation = self.plant.observe()
+        observation = self.plant.observe() if obs is None else obs
         battery = []
         for k in range(n_s):
             limit = (
@@ -264,10 +227,58 @@ class PolarMicrogridEnv(gym.Env):
 
     # -- observation ------------------------------------------------------
 
-    def _observe(self) -> np.ndarray:
-        return observation_vector(
-            self.plant.observe(), self.cfg, self._power_scale_kw, self.projection.melt_ceiling_kw()
-        )
+    def _observe(self, obs: dict[str, Any] | None = None) -> np.ndarray:
+        """Encode the plant's raw observation into the flat feature vector.
+
+        Accepts an already-fetched `plant.observe()` dict so a caller that has
+        one in hand (`HybridAgent`, notably) is not forced to trigger a second,
+        redundant call just to get it encoded.
+        """
+        obs = self.plant.observe() if obs is None else obs
+        cfg = self.cfg
+        scale = self._power_scale_kw
+        timestamp = obs["timestamp"]
+
+        seconds = timestamp.hour * 3600 + timestamp.minute * 60
+        day_angle = 2.0 * np.pi * seconds / SECONDS_PER_DAY
+        year_angle = 2.0 * np.pi * timestamp.dayofyear / DAYS_PER_YEAR
+
+        features = [
+            obs["electrical_load_kw"] / scale,
+            obs["critical_load_kw"] / scale,
+            obs["firm_thermal_kw"] / scale,
+            obs["pv_available_kw"] / scale,
+            obs["wind_available_kw"] / scale,
+            obs["air_temp_c"] / 40.0,
+            obs["wind_speed_ms"] / 25.0,
+            (obs["indoor_temp_c"] - cfg.thermal.indoor_setpoint_c) / 10.0,
+            obs["snow_melt_remaining_kwh"] / max(self.projection.melt_ceiling_kw() * 24.0, 1.0),
+            np.sin(day_angle),
+            np.cos(day_angle),
+            np.sin(year_angle),
+        ]
+        features += [float(v) for v in obs["genset_online"]]
+        features += [p / g.rated_kw for p, g in zip(obs["genset_power_kw"], cfg.gensets)]
+        features += [float(d) for d in obs["genset_deposit"]]
+        # Whether a commit/decommit request is even feasible right now
+        # (minimum up/down time). Diagnosed as a real gap during this
+        # project's own RL performance audit: the safety layer already
+        # reads these two fields to decide whether a stop/start would
+        # actually take effect (allotrope.safety.projection's
+        # _effective_online), but the agent never saw them -- it had to
+        # infer switching feasibility blind, purely from reward, which is
+        # consistent with the observed failure mode (6,599 stop requests
+        # blocked for breaching reserve across one evaluation year, versus
+        # only 495 actual starts -- a policy repeatedly asking for a stop
+        # it has no way to know is currently locked out).
+        features += [float(v) for v in obs["genset_can_start"]]
+        features += [float(v) for v in obs["genset_can_stop"]]
+        features += [float(s) for s in obs["battery_soc"]]
+        features += [
+            obs["battery_max_discharge_kw"][k] / max(s.max_discharge_kw, 1.0)
+            for k, s in enumerate(cfg.storage)
+        ]
+        return np.clip(np.asarray(features, dtype=np.float32), -5.0, 5.0)
 
     def _mean_deposit(self) -> float:
         return float(np.mean([g.state.deposit for g in self.plant.gensets]))

@@ -13,7 +13,13 @@ calls no solver, and cannot itself fail to converge, because a safety layer that
 can time out is not a safety layer. It runs in microseconds and its behaviour can
 be checked by reading it.
 
-What it guarantees, for *any* input including adversarial or malformed ones:
+What it guarantees, for *any* input including adversarial or malformed ones --
+and, since this project's own adversarial audit found the asymmetry, that
+means a corrupted **observation** (a lying or failed sensor) as much as a
+malformed **command** (a policy network emitting NaN): both go through a
+sanitiser before any bound reads them, see `_sanitise_bools`/
+`_sanitise_floats`/`_sanitise_scalar` for the command and
+`_sanitise_observation` for the observation:
 
   1. committed generating capacity always covers life support plus reserve;
   2. no set is stopped if stopping it would breach that cover;
@@ -42,6 +48,7 @@ class Intervention(str, Enum):
     """Why the projection changed an action. Surfaced to the operator HMI."""
 
     SANITISED_NAN = "sanitised_non_finite_action"
+    SANITISED_OBSERVATION = "sanitised_corrupt_observation"
     FORCED_START = "forced_start_for_capacity"
     BLOCKED_STOP = "blocked_stop_that_would_breach_reserve"
     CLIPPED_SETPOINT = "clipped_setpoint_to_machine_limits"
@@ -51,6 +58,7 @@ class Intervention(str, Enum):
     CLIPPED_MELT = "clipped_discretionary_load"
     SHED_MELT_FOR_CRITICAL = "shed_discretionary_load_for_critical"
     FORCED_START_FOR_HEAT = "forced_start_to_protect_heating"
+    RAISED_SETPOINT_FOR_HEAT = "raised_setpoint_to_cover_heat_shortfall"
 
 
 @dataclass
@@ -101,6 +109,7 @@ class SafetyProjection:
     ) -> tuple[DispatchCommand, SafetyReport]:
         """Return a safe command and a record of every bound that bit."""
         report = SafetyReport()
+        observation = self._sanitise_observation(observation, report)
 
         genset_on = self._sanitise_bools(command.genset_on, report)
         setpoints = self._sanitise_floats(
@@ -115,15 +124,24 @@ class SafetyProjection:
         genset_on = self._enforce_capacity(genset_on, observation, required_kw, report)
         genset_on = self._enforce_heat(genset_on, observation, report)
         setpoints = self._bound_setpoints(setpoints, genset_on, required_kw, observation, report)
+        setpoints = self._raise_setpoints_for_heat(setpoints, genset_on, observation, report)
         battery = self._bound_battery(battery, genset_on, setpoints, observation, report)
         melt = self._bound_melt(melt, genset_on, setpoints, battery, observation, report)
 
         report.committed_capacity_kw = self._capacity_kw(genset_on, observation)
+        recovered_heat_kw = sum(
+            setpoints[k] * self.cfg.gensets[k].chp_heat_ratio for k in range(len(self.cfg.gensets))
+        )
+        heat_shortfall_kw = observation["firm_thermal_kw"] - self.cfg.thermal.boiler_rated_kw
         report.detail.update(
             {
                 "critical_load_kw": observation["critical_load_kw"],
                 "reserve_margin_kw": self.cfg.criticality.reserve_margin_kw,
                 "indoor_temp_c": observation["indoor_temp_c"],
+                # >0 means even the fleet at its raised setpoints, fully committed,
+                # cannot recover enough heat -- a physical CHP-capacity shortfall
+                # this layer cannot manufacture away, surfaced rather than hidden.
+                "unmet_heat_shortfall_kw": max(heat_shortfall_kw - recovered_heat_kw, 0.0),
             }
         )
 
@@ -148,6 +166,108 @@ class SafetyProjection:
         return self.melt_ceiling_multiple * peak_daily_kwh / 24.0
 
     # -- sanitising -------------------------------------------------------
+
+    def _sanitise_observation(self, observation: dict, report: SafetyReport) -> dict:
+        """Guard against a corrupted or failed sensor, not just a corrupted action.
+
+        Every bound below reads directly from `observation` -- `battery_
+        max_charge_kw`, `critical_load_kw`, `pv_available_kw`, and so on --
+        trusting it the way `_sanitise_floats` deliberately does *not*
+        trust the agent's proposed command. That asymmetry was a real gap,
+        found by this project's own adversarial audit: a single NaN in
+        `battery_max_charge_kw` (a lying or failed sensor) reached
+        `np.clip(battery[k], lo, hi)` in `_bound_battery` with `lo=nan`,
+        produced a NaN battery command with **zero recorded intervention**,
+        and that NaN then permanently corrupted the battery's SOC in the
+        plant -- with no recovery path, since nothing ever detected it.
+        The same non-finite-comparisons-are-always-False behaviour let a
+        corrupted `pv_available_kw` bypass `_bound_melt`'s
+        shed-for-critical check entirely.
+
+        Every numeric and boolean field the bounds below actually read is
+        sanitised here, before any of them run, to whichever value keeps
+        the projection *more* conservative, never less -- mirroring the
+        direction this class already commits to for command sanitisation
+        and for `_enforce_capacity`/`_enforce_heat`'s existing behaviour on
+        a corrupted requirement (both already fail toward "start
+        everything," which is why they were not the ones that produced an
+        unsafe output; they still could not report a sane metric with a
+        NaN input, which this also fixes).
+        """
+        safe = dict(observation)
+        n_g, n_s = len(self.cfg.gensets), len(self.cfg.storage)
+
+        def scalar(key: str, worst_case: float) -> None:
+            try:
+                v = float(safe.get(key))
+            except (TypeError, ValueError):
+                v = float("nan")
+            if not np.isfinite(v):
+                report.record(Intervention.SANITISED_OBSERVATION)
+                v = worst_case
+            safe[key] = v
+
+        def float_array(key: str, width: int, worst_case: float) -> None:
+            try:
+                raw = list(safe.get(key))
+            except TypeError:
+                raw = []
+            out = []
+            for v in raw:
+                try:
+                    v = float(v)
+                except (TypeError, ValueError):
+                    v = float("nan")
+                if not np.isfinite(v):
+                    report.record(Intervention.SANITISED_OBSERVATION)
+                    v = worst_case
+                out.append(v)
+            while len(out) < width:
+                report.record(Intervention.SANITISED_OBSERVATION)
+                out.append(worst_case)
+            safe[key] = out[:width]
+
+        def bool_array(key: str, width: int) -> None:
+            try:
+                raw = list(safe.get(key))
+            except TypeError:
+                raw = []
+            out = []
+            for v in raw:
+                try:
+                    out.append(bool(v))
+                except (TypeError, ValueError):
+                    report.record(Intervention.SANITISED_OBSERVATION)
+                    out.append(False)
+            while len(out) < width:
+                report.record(Intervention.SANITISED_OBSERVATION)
+                out.append(False)
+            safe[key] = out[:width]
+
+        max_capacity_kw = sum(g.rated_kw for g in self.cfg.gensets)
+        max_recoverable_heat_kw = sum(g.rated_kw * g.chp_heat_ratio for g in self.cfg.gensets)
+
+        # Worst case for a demand/requirement figure is "assume it is as
+        # large as the fleet could possibly need to cover" -- the same
+        # direction _enforce_capacity/_enforce_heat already fail toward.
+        scalar("critical_load_kw", max_capacity_kw)
+        scalar("firm_thermal_kw", self.cfg.thermal.boiler_rated_kw + max_recoverable_heat_kw)
+        # Worst case for an availability/headroom figure is "assume none is
+        # available" -- granting charge/discharge or discretionary load
+        # against an unknown envelope is the unsafe direction, not the safe one.
+        float_array("battery_max_charge_kw", n_s, 0.0)
+        float_array("battery_max_discharge_kw", n_s, 0.0)
+        scalar("pv_available_kw", 0.0)
+        scalar("wind_available_kw", 0.0)
+        # Worst case for fleet status is "assume nothing is already running
+        # and nothing may start" -- forces _enforce_capacity/_enforce_heat
+        # to make their own case for every set from scratch rather than
+        # trusting a corrupted "it's already covered" signal.
+        bool_array("genset_online", n_g)
+        bool_array("genset_can_start", n_g)
+        bool_array("genset_can_stop", n_g)
+
+        return safe
 
     def _sanitise_bools(self, values, report: SafetyReport) -> list[bool]:
         """A policy network can emit anything. Treat non-finite as 'off' and move on."""
@@ -269,6 +389,49 @@ class SafetyProjection:
                 genset_on[k] = True
                 report.record(Intervention.FORCED_START_FOR_HEAT)
         return genset_on
+
+    def _raise_setpoints_for_heat(
+        self, setpoints: list[float], genset_on: list[bool], observation: dict, report: SafetyReport
+    ) -> list[float]:
+        """Close the gap `_enforce_heat` cannot see on its own.
+
+        `_enforce_heat` decides which sets must be *committed* using each
+        set's rated CHP output, because at that point in the pipeline no
+        setpoint has been chosen yet. But `_bound_setpoints` only raises a
+        committed set's ceiling far enough to cover the *electrical* load --
+        a set sitting at `min_stable_kw` recovers a fraction of what
+        `_enforce_heat` assumed available. Left uncorrected, the projection
+        reports the heat guarantee satisfied while the station is still
+        short: committing a set is not the same as letting it produce, and
+        that gap is exactly what this step closes, the same way
+        `_bound_setpoints` already closes it for the electrical requirement.
+        """
+        therm = self.cfg.thermal
+        shortfall_kw = observation["firm_thermal_kw"] - therm.boiler_rated_kw
+        if shortfall_kw <= 0.0:
+            return setpoints
+
+        out = list(setpoints)
+        committed = [k for k, on in enumerate(genset_on) if on]
+        recovered = sum(out[k] * self.cfg.gensets[k].chp_heat_ratio for k in committed)
+        if recovered >= shortfall_kw - 1e-9:
+            return out
+
+        # Raise the largest sets first -- fewer machines pushed harder costs
+        # less wear than spreading the raise thin across the whole fleet.
+        for k in sorted(committed, key=lambda k: -self.cfg.gensets[k].rated_kw):
+            if recovered >= shortfall_kw - 1e-9:
+                break
+            g = self.cfg.gensets[k]
+            headroom_kw = g.rated_kw - out[k]
+            if headroom_kw <= 1e-9 or g.chp_heat_ratio <= 0.0:
+                continue
+            heat_needed_kw = shortfall_kw - recovered
+            raise_kw = min(headroom_kw, heat_needed_kw / g.chp_heat_ratio)
+            out[k] += raise_kw
+            recovered += raise_kw * g.chp_heat_ratio
+            report.record(Intervention.RAISED_SETPOINT_FOR_HEAT)
+        return out
 
     # -- bounds -----------------------------------------------------------
 

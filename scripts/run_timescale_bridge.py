@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import time
 
 import psycopg
@@ -23,7 +24,13 @@ def main() -> None:
     args = parser.parse_args()
 
     connection = psycopg.connect(args.db_dsn, autocommit=False)
-    subscriber = TelemetrySubscriber(args.stations, host=args.mqtt_host, port=args.mqtt_port)
+    subscriber = TelemetrySubscriber(
+        args.stations,
+        host=args.mqtt_host,
+        port=args.mqtt_port,
+        username=os.environ.get("MQTT_USERNAME"),
+        password=os.environ.get("MQTT_PASSWORD"),
+    )
     bridge = TimescaleBridge(subscriber, connection)
 
     print(f"bridging {args.stations} -> {args.db_dsn}")

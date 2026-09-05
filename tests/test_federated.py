@@ -1,157 +1,297 @@
-"""Federated averaging: the arithmetic, and the end-to-end round.
-
-Maitri and Bharati differ by roughly 2x in installed capacity but share the same
-asset counts -- three gensets, two storage packs -- which is what makes
-averaging their trained weights meaningful rather than merely mechanically
-possible. These tests keep local training tiny (a handful of short episodes)
-because the property under test is that the federation mechanism is correct,
-not that it converges to a good policy -- that claim belongs to
-`scripts/evaluate_agent.py`, on much longer runs.
+"""Federated learning: aggregation as a pure function, then the full local
+-> aggregate -> validate -> (accept | rollback) loop against real, if
+small, training runs.
 """
 
 from __future__ import annotations
 
+from collections import OrderedDict
+from pathlib import Path
+
+import pytest
 import torch
 
-from allotrope.agents.dqn import DQNConfig
-from allotrope.agents.federated import (
-    FederatedConfig,
-    average_state_dicts,
-    run_federated_training,
-)
-from allotrope.agents.hybrid import HybridAgent
-from allotrope.agents.sddpg import SDDPGConfig
 from allotrope.config import load_station
-from allotrope.envs.polar_microgrid import observation_width
-from allotrope.safety.fallback import GuardedController
-from allotrope.sim.runner import build_plant, run_episode
+from allotrope.federated.aggregate import average_state_dict, clip_outliers, fedavg_checkpoint
+from allotrope.federated.coordinator import run_round, run_rounds
+from allotrope.federated.round import LocalUpdateResult, ValidationResult, run_local_update
+from allotrope.train import train
+
+# -- average_state_dict: a pure function, tested without training anything --
 
 
-def _leaves(state: dict, prefix: tuple = ()) -> list[tuple[tuple, torch.Tensor]]:
-    """Flatten a HybridAgent state dict to (key-path, tensor) pairs.
-
-    A path element can itself legally contain a dot -- a plain `nn.Module`
-    `state_dict()` key like `"net.0.weight"` is one flat dict key, not three
-    nested levels -- so paths are kept as tuples of the original dict keys
-    rather than joined into a dotted string that would have to be re-split.
-    """
-    out = []
-    for key, value in state.items():
-        path = prefix + (key,)
-        if isinstance(value, dict):
-            out.extend(_leaves(value, path))
-        else:
-            out.append((path, value))
-    return out
+def test_average_state_dict_computes_the_exact_weighted_mean():
+    a = OrderedDict(w=torch.tensor([1.0, 2.0]), b=torch.tensor(0.0))
+    b = OrderedDict(w=torch.tensor([3.0, 4.0]), b=torch.tensor(10.0))
+    result = average_state_dict([a, b], weights=[1.0, 1.0])
+    assert torch.allclose(result["w"], torch.tensor([2.0, 3.0]))
+    assert torch.allclose(result["b"], torch.tensor(5.0))
 
 
-def _lookup(state: dict, path: tuple):
-    node = state
-    for key in path:
-        node = node[key]
-    return node
+def test_average_state_dict_respects_unequal_weights():
+    a = OrderedDict(w=torch.tensor([0.0]))
+    b = OrderedDict(w=torch.tensor([10.0]))
+    result = average_state_dict([a, b], weights=[3.0, 1.0])  # 75%/25%
+    assert torch.allclose(result["w"], torch.tensor([2.5]))
 
 
-def test_averaging_two_identical_networks_returns_the_same_weights():
-    cfg = load_station("maitri")
-    agent = HybridAgent(cfg)
-    state = agent.state_dict()
-    averaged = average_state_dicts([state, state])
-    for path, tensor in _leaves(state):
-        assert torch.allclose(_lookup(averaged, path), tensor)
+def test_average_state_dict_rejects_mismatched_keys():
+    a = OrderedDict(w=torch.tensor([1.0]))
+    b = OrderedDict(x=torch.tensor([1.0]))
+    with pytest.raises(ValueError, match="parameter keys"):
+        average_state_dict([a, b], weights=[1.0, 1.0])
 
 
-def test_averaging_is_the_elementwise_mean():
-    a = {"net": {"w": torch.tensor([0.0, 2.0]), "b": torch.tensor([1.0])}}
-    b = {"net": {"w": torch.tensor([2.0, 4.0]), "b": torch.tensor([3.0])}}
-    averaged = average_state_dicts([a, b])
-    assert torch.allclose(averaged["net"]["w"], torch.tensor([1.0, 3.0]))
-    assert torch.allclose(averaged["net"]["b"], torch.tensor([2.0]))
+def test_average_state_dict_rejects_mismatched_shapes():
+    a = OrderedDict(w=torch.tensor([1.0, 2.0]))
+    b = OrderedDict(w=torch.tensor([1.0, 2.0, 3.0]))
+    with pytest.raises(ValueError, match="shape mismatch"):
+        average_state_dict([a, b], weights=[1.0, 1.0])
 
 
-def test_averaging_respects_unequal_weights():
-    a = {"net": {"w": torch.tensor([0.0])}}
-    b = {"net": {"w": torch.tensor([10.0])}}
-    averaged = average_state_dicts([a, b], weights=[3.0, 1.0])
-    assert torch.allclose(averaged["net"]["w"], torch.tensor([2.5]))
+def test_average_state_dict_rejects_nonpositive_total_weight():
+    a = OrderedDict(w=torch.tensor([1.0]))
+    with pytest.raises(ValueError, match="positive"):
+        average_state_dict([a, a], weights=[0.0, 0.0])
 
 
-def test_averaging_requires_at_least_one_state_dict():
-    import pytest
-
-    with pytest.raises(ValueError):
-        average_state_dicts([])
+# -- outlier clipping (F8 from the adversarial audit) --------------------------
 
 
-def test_maitri_and_bharati_agents_share_dimensions():
-    """This is the precondition federation depends on: same shapes to average."""
-    maitri, bharati = load_station("maitri"), load_station("bharati")
-    assert observation_width(maitri) == observation_width(bharati)
-    assert len(maitri.gensets) == len(bharati.gensets)
-    assert len(maitri.storage) == len(bharati.storage)
-
-    a, b = HybridAgent(maitri), HybridAgent(bharati)
-    assert a.obs_dim == b.obs_dim
-    assert a.dispatch_dim == b.dispatch_dim
-    assert a.dqn.n_actions == b.dqn.n_actions
-
-
-def test_federation_across_stations_with_different_asset_counts_is_refused():
-    maitri = load_station("maitri")
-    mismatched = maitri.__class__(**{**maitri.__dict__, "gensets": maitri.gensets[:2]})
-
-    import pytest
-
-    with pytest.raises(ValueError, match="cannot be federated"):
-        run_federated_training({"maitri": maitri, "short": mismatched}, FederatedConfig(rounds=1))
+def test_clip_outliers_leaves_similar_magnitude_updates_unchanged():
+    """Ordinary training variance across honest stations must not trigger
+    clipping -- otherwise this "fix" would just be quietly corrupting every
+    normal round."""
+    a = OrderedDict(w=torch.tensor([1.0, 2.0]))
+    b = OrderedDict(w=torch.tensor([1.1, 2.1]))
+    c = OrderedDict(w=torch.tensor([0.9, 1.9]))
+    clipped = clip_outliers([a, b, c])
+    for original, result in zip([a, b, c], clipped):
+        assert torch.allclose(original["w"], result["w"])
 
 
-def _tiny_config(rounds: int, local_episodes: int) -> FederatedConfig:
-    return FederatedConfig(
-        rounds=rounds,
-        local_episodes=local_episodes,
-        episode_steps=24,
+def test_clip_outliers_bounds_a_single_scaled_up_contributor():
+    """The concrete F8 attack: plain FedAvg has no answer at all for one
+    contributor submitting an update scaled 1000x larger than everyone
+    else's -- averaging is linear, so that one update would otherwise
+    dominate the result regardless of how many honest contributors exist."""
+    honest = [OrderedDict(w=torch.tensor([1.0, 1.0])) for _ in range(4)]
+    malicious = OrderedDict(w=torch.tensor([1000.0, 1000.0]))
+    state_dicts = honest + [malicious]
+
+    clipped = clip_outliers(state_dicts, multiplier=3.0)
+    honest_norm = state_dicts[0]["w"].norm()
+    clipped_malicious_norm = clipped[-1]["w"].norm()
+    assert clipped_malicious_norm == pytest.approx((honest_norm * 3.0).item(), rel=1e-4)
+    # Honest contributors, all near the median, are untouched.
+    for original, result in zip(honest, clipped[:-1]):
+        assert torch.allclose(original["w"], result["w"])
+
+
+def test_average_state_dict_with_clipping_resists_a_scaled_up_outlier():
+    """The end-to-end property that matters: the AVERAGE, not just the
+    clipped tensor, stays close to what the honest contributors alone
+    would have produced -- this is what actually protects the global
+    model, clip_outliers on its own is just the mechanism."""
+    honest = [OrderedDict(w=torch.tensor([1.0])) for _ in range(4)]
+    malicious = OrderedDict(w=torch.tensor([1_000_000.0]))
+    weights = [1.0] * 5
+
+    unclipped = average_state_dict(honest + [malicious], weights, clip_multiplier=None)
+    clipped = average_state_dict(honest + [malicious], weights, clip_multiplier=3.0)
+
+    assert unclipped["w"].item() > 100_000.0  # plain FedAvg: dominated by the outlier
+    assert clipped["w"].item() < 3.0  # clipped: close to the honest contributors' own value of 1.0
+
+
+def test_clip_outliers_is_a_no_op_for_a_single_contributor():
+    a = OrderedDict(w=torch.tensor([5.0]))
+    assert clip_outliers([a]) == [a]
+
+
+# -- fedavg_checkpoint: the same, at the checkpoint-dict level -------------
+
+
+def _tiny_checkpoint(seed: int, obs_dim=5, n_g=3, dispatch_dim=6) -> dict:
+    from allotrope.agents.dqn import BranchingDQN, DQNConfig
+    from allotrope.agents.sddpg import SDDPG, SDDPGConfig
+
+    dqn = BranchingDQN(obs_dim, n_g, DQNConfig(seed=seed))
+    sddpg = SDDPG(obs_dim, dispatch_dim, SDDPGConfig(seed=seed))
+    return {
+        "obs_dim": obs_dim,
+        "n_gensets": n_g,
+        "dispatch_dim": dispatch_dim,
+        "dqn": dqn.state_dict(),
+        "sddpg": sddpg.state_dict(),
+    }
+
+
+def test_fedavg_checkpoint_averages_real_network_weights():
+    c1 = _tiny_checkpoint(seed=1)
+    c2 = _tiny_checkpoint(seed=2)
+    merged = fedavg_checkpoint([c1, c2], weights=[1.0, 1.0])
+
+    # Spot-check one real parameter tensor against the literal weighted mean.
+    key = next(iter(c1["dqn"]["online"]))
+    expected = (c1["dqn"]["online"][key] + c2["dqn"]["online"][key]) / 2.0
+    assert torch.allclose(merged["dqn"]["online"][key], expected)
+
+    # The merged checkpoint must be loadable into fresh agents of the same shape.
+    from allotrope.agents.dqn import BranchingDQN, DQNConfig
+    from allotrope.agents.sddpg import SDDPG, SDDPGConfig
+
+    dqn = BranchingDQN(5, 3, DQNConfig())
+    sddpg = SDDPG(5, 6, SDDPGConfig())
+    dqn.load_state_dict(merged["dqn"])
+    sddpg.load_state_dict(merged["sddpg"])
+
+    import numpy as np
+
+    obs = np.zeros(5, dtype=np.float32)
+    action = dqn.act(obs, deterministic=True)
+    assert action.shape == (3,)
+    dispatch = sddpg.act(obs, deterministic=True)
+    assert np.all(np.isfinite(dispatch))
+
+
+def test_fedavg_checkpoint_sums_step_counters_rather_than_averaging_them():
+    c1 = _tiny_checkpoint(seed=1)
+    c1["dqn"]["env_steps"] = 100
+    c2 = _tiny_checkpoint(seed=2)
+    c2["dqn"]["env_steps"] = 300
+    merged = fedavg_checkpoint([c1, c2], weights=[1.0, 1.0])
+    assert merged["dqn"]["env_steps"] == 400
+
+
+def test_fedavg_checkpoint_rejects_architecture_mismatch():
+    c1 = _tiny_checkpoint(seed=1, n_g=3)
+    c2 = _tiny_checkpoint(seed=2, n_g=4)
+    with pytest.raises(ValueError, match="n_gensets"):
+        fedavg_checkpoint([c1, c2], weights=[1.0, 1.0])
+
+
+# -- warm-start: allotrope.train.train's init_checkpoint -------------------
+
+
+def test_warm_started_training_with_no_update_reproduces_the_initial_weights(tmp_path):
+    """With warmup_steps far above total_steps, no gradient update happens,
+    so the saved checkpoint's weights must exactly equal what was loaded in."""
+    source_dir = train(
+        agent_kind="hybrid",
+        station="maitri",
+        total_steps=5,
         seed=0,
-        dqn_config=DQNConfig(warmup_steps=5, batch_size=8, epsilon_decay=0.9),
-        sddpg_config=SDDPGConfig(warmup_steps=5, batch_size=8, exploration_decay=0.9),
+        episode_steps=24,
+        warmup_steps=1000,
+        buffer_capacity=100,
+        runs_dir=tmp_path / "source",
+    )
+    source_checkpoint = source_dir / "checkpoint.pt"
+
+    warm_dir = train(
+        agent_kind="hybrid",
+        station="maitri",
+        total_steps=1,
+        seed=42,  # different seed: only init_checkpoint should determine the weights
+        episode_steps=24,
+        warmup_steps=1000,
+        buffer_capacity=100,
+        runs_dir=tmp_path / "warm",
+        init_checkpoint=source_checkpoint,
     )
 
+    source_state = torch.load(source_checkpoint, map_location="cpu", weights_only=True)
+    warm_state = torch.load(warm_dir / "checkpoint.pt", map_location="cpu", weights_only=True)
+    key = next(iter(source_state["dqn"]["online"]))
+    assert torch.equal(source_state["dqn"]["online"][key], warm_state["dqn"]["online"][key])
 
-def test_a_federated_round_actually_changes_the_global_weights():
-    stations = {"maitri": load_station("maitri"), "bharati": load_station("bharati")}
-    initial = HybridAgent(stations["maitri"]).state_dict()
 
-    global_agent, logs = run_federated_training(stations, _tiny_config(rounds=2, local_episodes=2))
+# -- the full round: local update -> aggregate -> validate -----------------
 
-    assert len(logs) == 2
-    assert set(logs[0].per_station_mean_reward) == {"maitri", "bharati"}
-    after = global_agent.state_dict()
-    initial_leaves = dict(_leaves(initial))
-    after_leaves = dict(_leaves(after))
-    changed = any(
-        not torch.allclose(initial_leaves[path], after_leaves[path]) for path in initial_leaves
+ROUND_KWARGS = dict(episode_steps=48, warmup_steps=50, buffer_capacity=500)
+
+
+def test_a_real_round_produces_an_accepted_global_checkpoint(tmp_path):
+    record = run_round(
+        round_num=1,
+        stations=["maitri", "bharati"],
+        local_steps=100,
+        current_global_checkpoint=None,
+        seed_base=0,
+        runs_dir=tmp_path,
+        **ROUND_KWARGS,
     )
-    assert changed, "federated training left the global weights untouched"
+    assert record.accepted, record.validation["reason"]
+    assert record.global_checkpoint_path is not None
+    assert Path(record.global_checkpoint_path).exists()
+    assert set(record.aggregation_weights) == {"maitri", "bharati"}
+    for station in ("maitri", "bharati"):
+        assert record.validation["per_station"][station]["critical_unserved_kwh"] == pytest.approx(0.0)
+
+    record_file = tmp_path / "federated" / "round_1" / "round_record.json"
+    assert record_file.exists()
 
 
-def test_the_federated_agent_stays_safe_at_every_participating_station():
-    """Averaged weights are still an arbitrary network; the guarantee must not
-    depend on which station trained them."""
-    stations = {"maitri": load_station("maitri"), "bharati": load_station("bharati")}
-    global_agent, _ = run_federated_training(stations, _tiny_config(rounds=1, local_episodes=1))
-
-    for name, cfg in stations.items():
-        guarded = GuardedController(cfg, agent=global_agent)
-        plant = build_plant(cfg, start="2026-06-01", periods=48, seed=1)
-        result = run_episode(plant, guarded)
-        assert result.summary["critical_unserved_kwh"] == 0.0, name
-        assert result.summary["freeze_violation_steps"] == 0.0, name
-
-
-def test_on_round_callback_fires_once_per_round():
-    stations = {"maitri": load_station("maitri"), "bharati": load_station("bharati")}
-    seen = []
-    run_federated_training(
-        stations, _tiny_config(rounds=3, local_episodes=1), on_round=lambda log: seen.append(log.round)
+def test_a_second_round_can_start_from_the_first_rounds_global_checkpoint(tmp_path):
+    first = run_round(
+        round_num=1,
+        stations=["maitri", "bharati"],
+        local_steps=100,
+        current_global_checkpoint=None,
+        seed_base=0,
+        runs_dir=tmp_path,
+        **ROUND_KWARGS,
     )
-    assert seen == [0, 1, 2]
+    assert first.accepted
+    second = run_round(
+        round_num=2,
+        stations=["maitri", "bharati"],
+        local_steps=100,
+        current_global_checkpoint=Path(first.global_checkpoint_path),
+        seed_base=10,
+        runs_dir=tmp_path,
+        **ROUND_KWARGS,
+    )
+    assert second.previous_global_checkpoint_path == first.global_checkpoint_path
+    assert second.accepted, second.validation["reason"]
+
+
+def test_a_rejected_round_is_never_promoted_and_is_kept_for_provenance(tmp_path):
+    def always_reject(checkpoint_path: Path, stations: list[str]) -> ValidationResult:
+        return ValidationResult(accepted=False, reason="forced rejection for this test", per_station={})
+
+    record = run_round(
+        round_num=1,
+        stations=["maitri"],
+        local_steps=50,
+        current_global_checkpoint=None,
+        seed_base=0,
+        runs_dir=tmp_path,
+        validator=always_reject,
+        **ROUND_KWARGS,
+    )
+    assert not record.accepted
+    assert record.global_checkpoint_path is None
+    assert Path(record.candidate_checkpoint_path).exists()  # kept, not deleted
+
+
+def test_run_rounds_carries_forward_only_the_last_accepted_checkpoint(tmp_path):
+    calls = {"n": 0}
+
+    def reject_first_accept_rest(checkpoint_path: Path, stations: list[str]) -> ValidationResult:
+        calls["n"] += 1
+        return ValidationResult(accepted=calls["n"] > 1, reason="test", per_station={})
+
+    records = run_rounds(
+        n_rounds=2,
+        stations=["maitri"],
+        local_steps=50,
+        runs_dir=tmp_path,
+        validator=reject_first_accept_rest,
+        **ROUND_KWARGS,
+    )
+    assert not records[0].accepted
+    assert records[1].accepted
+    # Round 2 must not have been warm-started from round 1's (rejected) output.
+    assert records[1].previous_global_checkpoint_path is None

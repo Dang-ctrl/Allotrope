@@ -11,8 +11,10 @@ data/generated/
 .env
 .DS_Store
 *.pptx
+runs/
 checkpoints/
 *.pt
+*.onnx
 
 # the web frontend's toolchain (webapp/frontend)
 node_modules/
