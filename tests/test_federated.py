@@ -12,7 +12,7 @@ import pytest
 import torch
 
 from allotrope.config import load_station
-from allotrope.federated.aggregate import average_state_dict, fedavg_checkpoint
+from allotrope.federated.aggregate import average_state_dict, clip_outliers, fedavg_checkpoint
 from allotrope.federated.coordinator import run_round, run_rounds
 from allotrope.federated.round import LocalUpdateResult, ValidationResult, run_local_update
 from allotrope.train import train
@@ -53,6 +53,60 @@ def test_average_state_dict_rejects_nonpositive_total_weight():
     a = OrderedDict(w=torch.tensor([1.0]))
     with pytest.raises(ValueError, match="positive"):
         average_state_dict([a, a], weights=[0.0, 0.0])
+
+
+# -- outlier clipping (F8 from the adversarial audit) --------------------------
+
+
+def test_clip_outliers_leaves_similar_magnitude_updates_unchanged():
+    """Ordinary training variance across honest stations must not trigger
+    clipping -- otherwise this "fix" would just be quietly corrupting every
+    normal round."""
+    a = OrderedDict(w=torch.tensor([1.0, 2.0]))
+    b = OrderedDict(w=torch.tensor([1.1, 2.1]))
+    c = OrderedDict(w=torch.tensor([0.9, 1.9]))
+    clipped = clip_outliers([a, b, c])
+    for original, result in zip([a, b, c], clipped):
+        assert torch.allclose(original["w"], result["w"])
+
+
+def test_clip_outliers_bounds_a_single_scaled_up_contributor():
+    """The concrete F8 attack: plain FedAvg has no answer at all for one
+    contributor submitting an update scaled 1000x larger than everyone
+    else's -- averaging is linear, so that one update would otherwise
+    dominate the result regardless of how many honest contributors exist."""
+    honest = [OrderedDict(w=torch.tensor([1.0, 1.0])) for _ in range(4)]
+    malicious = OrderedDict(w=torch.tensor([1000.0, 1000.0]))
+    state_dicts = honest + [malicious]
+
+    clipped = clip_outliers(state_dicts, multiplier=3.0)
+    honest_norm = state_dicts[0]["w"].norm()
+    clipped_malicious_norm = clipped[-1]["w"].norm()
+    assert clipped_malicious_norm == pytest.approx((honest_norm * 3.0).item(), rel=1e-4)
+    # Honest contributors, all near the median, are untouched.
+    for original, result in zip(honest, clipped[:-1]):
+        assert torch.allclose(original["w"], result["w"])
+
+
+def test_average_state_dict_with_clipping_resists_a_scaled_up_outlier():
+    """The end-to-end property that matters: the AVERAGE, not just the
+    clipped tensor, stays close to what the honest contributors alone
+    would have produced -- this is what actually protects the global
+    model, clip_outliers on its own is just the mechanism."""
+    honest = [OrderedDict(w=torch.tensor([1.0])) for _ in range(4)]
+    malicious = OrderedDict(w=torch.tensor([1_000_000.0]))
+    weights = [1.0] * 5
+
+    unclipped = average_state_dict(honest + [malicious], weights, clip_multiplier=None)
+    clipped = average_state_dict(honest + [malicious], weights, clip_multiplier=3.0)
+
+    assert unclipped["w"].item() > 100_000.0  # plain FedAvg: dominated by the outlier
+    assert clipped["w"].item() < 3.0  # clipped: close to the honest contributors' own value of 1.0
+
+
+def test_clip_outliers_is_a_no_op_for_a_single_contributor():
+    a = OrderedDict(w=torch.tensor([5.0]))
+    assert clip_outliers([a]) == [a]
 
 
 # -- fedavg_checkpoint: the same, at the checkpoint-dict level -------------
