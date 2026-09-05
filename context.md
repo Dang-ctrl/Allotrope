@@ -156,6 +156,35 @@ containers and the bridge container crashed on import within a second of
 starting in a fresh build. Fixed by declaring both as real dependencies. See
 `deploy/README.md` for the full verification table.
 
+## Judge-facing artifacts
+
+Two published Claude Artifacts exist for demoing this project, both driven by
+real data, none of it narrated:
+
+- **Console** (`https://claude.ai/code/artifact/2afb7cc5-ad1d-4b80-961a-4244de4a5979`)
+  — the results dashboard: baseline comparison, safety audit table, held-out
+  agent evaluation, the honest federated/infra status log.
+- **Scenario explorer** (`https://claude.ai/code/artifact/f829ddec-0529-4097-8fdd-c1ca378caf34`)
+  — four interactive, played-back simulations: (1) a blizzard and record cold
+  landing the same hour an AI failure is injected, guarded vs. unguarded; (2)
+  one genset's exhaust fouling under `LegacyNPlusOne` over two weeks while it
+  stays clean under `EfficientRuleBased` — the founding problem, watched
+  happening; (3) a real windy day at Bharati where legacy wastes 1,418 kWh of
+  wind and the efficient controller runs the station on wind alone for 9
+  hours; (4) a forward stress test of the OpenDSS twin's Volt-VAr/Volt-Watt
+  fallback as installed renewable capacity is scaled from 1x to 6x today's —
+  explicitly labelled as a stress test, since real generation today never
+  approaches the trigger point.
+
+`scripts/generate_scenarios.py` reproduces the exact data behind all four
+scenario-explorer cases and is checked against the published data byte-for-byte
+(only unused display fields differ). Run it after changing anything upstream of
+these scenarios and diff the output before republishing the artifact — three
+real bugs were found building these (two mismatched simulation
+seed/period/start-date alignments producing fabricated events, one climate-generator
+non-reproducibility across differing `periods` values with the same seed) and
+none of them were obvious from the numbers alone; they were caught only by
+re-deriving each scenario's timing independently before trusting it.
 ## Open questions and known gaps
 
 - **Bharati agent: done**, results above. **Federated training: done, and
