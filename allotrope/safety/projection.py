@@ -51,6 +51,7 @@ class Intervention(str, Enum):
     CLIPPED_MELT = "clipped_discretionary_load"
     SHED_MELT_FOR_CRITICAL = "shed_discretionary_load_for_critical"
     FORCED_START_FOR_HEAT = "forced_start_to_protect_heating"
+    RAISED_SETPOINT_FOR_HEAT = "raised_setpoint_to_cover_heat_shortfall"
 
 
 @dataclass
@@ -115,15 +116,24 @@ class SafetyProjection:
         genset_on = self._enforce_capacity(genset_on, observation, required_kw, report)
         genset_on = self._enforce_heat(genset_on, observation, report)
         setpoints = self._bound_setpoints(setpoints, genset_on, required_kw, observation, report)
+        setpoints = self._raise_setpoints_for_heat(setpoints, genset_on, observation, report)
         battery = self._bound_battery(battery, genset_on, setpoints, observation, report)
         melt = self._bound_melt(melt, genset_on, setpoints, battery, observation, report)
 
         report.committed_capacity_kw = self._capacity_kw(genset_on, observation)
+        recovered_heat_kw = sum(
+            setpoints[k] * self.cfg.gensets[k].chp_heat_ratio for k in range(len(self.cfg.gensets))
+        )
+        heat_shortfall_kw = observation["firm_thermal_kw"] - self.cfg.thermal.boiler_rated_kw
         report.detail.update(
             {
                 "critical_load_kw": observation["critical_load_kw"],
                 "reserve_margin_kw": self.cfg.criticality.reserve_margin_kw,
                 "indoor_temp_c": observation["indoor_temp_c"],
+                # >0 means even the fleet at its raised setpoints, fully committed,
+                # cannot recover enough heat -- a physical CHP-capacity shortfall
+                # this layer cannot manufacture away, surfaced rather than hidden.
+                "unmet_heat_shortfall_kw": max(heat_shortfall_kw - recovered_heat_kw, 0.0),
             }
         )
 
@@ -269,6 +279,49 @@ class SafetyProjection:
                 genset_on[k] = True
                 report.record(Intervention.FORCED_START_FOR_HEAT)
         return genset_on
+
+    def _raise_setpoints_for_heat(
+        self, setpoints: list[float], genset_on: list[bool], observation: dict, report: SafetyReport
+    ) -> list[float]:
+        """Close the gap `_enforce_heat` cannot see on its own.
+
+        `_enforce_heat` decides which sets must be *committed* using each
+        set's rated CHP output, because at that point in the pipeline no
+        setpoint has been chosen yet. But `_bound_setpoints` only raises a
+        committed set's ceiling far enough to cover the *electrical* load --
+        a set sitting at `min_stable_kw` recovers a fraction of what
+        `_enforce_heat` assumed available. Left uncorrected, the projection
+        reports the heat guarantee satisfied while the station is still
+        short: committing a set is not the same as letting it produce, and
+        that gap is exactly what this step closes, the same way
+        `_bound_setpoints` already closes it for the electrical requirement.
+        """
+        therm = self.cfg.thermal
+        shortfall_kw = observation["firm_thermal_kw"] - therm.boiler_rated_kw
+        if shortfall_kw <= 0.0:
+            return setpoints
+
+        out = list(setpoints)
+        committed = [k for k, on in enumerate(genset_on) if on]
+        recovered = sum(out[k] * self.cfg.gensets[k].chp_heat_ratio for k in committed)
+        if recovered >= shortfall_kw - 1e-9:
+            return out
+
+        # Raise the largest sets first -- fewer machines pushed harder costs
+        # less wear than spreading the raise thin across the whole fleet.
+        for k in sorted(committed, key=lambda k: -self.cfg.gensets[k].rated_kw):
+            if recovered >= shortfall_kw - 1e-9:
+                break
+            g = self.cfg.gensets[k]
+            headroom_kw = g.rated_kw - out[k]
+            if headroom_kw <= 1e-9 or g.chp_heat_ratio <= 0.0:
+                continue
+            heat_needed_kw = shortfall_kw - recovered
+            raise_kw = min(headroom_kw, heat_needed_kw / g.chp_heat_ratio)
+            out[k] += raise_kw
+            recovered += raise_kw * g.chp_heat_ratio
+            report.record(Intervention.RAISED_SETPOINT_FOR_HEAT)
+        return out
 
     # -- bounds -----------------------------------------------------------
 
