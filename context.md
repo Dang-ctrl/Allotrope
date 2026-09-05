@@ -311,32 +311,41 @@ but it shows the system actually running rather than a replay.
   than the page. Whoever owns it needs to update it directly, or share it
   with other accounts that need to maintain it.
 - **Winter-Over Log** (`https://claude.ai/code/artifact/0a7dbc7e-51ae-4269-9739-a77e5c65ca8c`)
-  — a second artifact covering the same four scenarios, published from this
-  session (2026-09-05) specifically because the one above wasn't reachable to
-  update. Same underlying `scenarios.json`, different presentation: a
-  station-log rail (STORM / WETSTACK / FREEWIND / GRIDSTRESS), hand-drawn SVG
-  charts with hover tooltips and direct labels, and a play/scrub transport
-  control on the two time-series cases (storm, free-wind) that moves a
-  crosshair through the replay. Built following the project's `dataviz`
-  discipline throughout — single-axis charts only (the original React
-  version's dual-axis weather chart is *not* replicated here; temperature and
-  wind speed are two separate small multiples instead), a validated
-  categorical pair (`#1097ba` glacier cyan for the efficient/guarded policy,
-  `#c9793a` ember amber for legacy/unguarded — CVD ΔE 17.5, checked with
-  `scripts/validate_palette.js`), and status colors (danger `#bc2a49`,
-  confirm `#1f9c48`) reserved and never reused as series identity.
-  **Until someone has update access to the original link, treat this one as
-  the actively maintained scenario-explorer artifact.**
+  — a second artifact, published from this session (2026-09-05) specifically
+  because the one above wasn't reachable to update. Started at the same four
+  scenarios; **since republished to the UI's full nine** (agent-eval ×2,
+  safety audit, cold battery, federated) — a station-log rail (STORM /
+  WETSTACK / FREEWIND / GRIDSTRESS / AGENT-EVAL ×2 / AUDIT / COLDCELL /
+  FEDAVG), hand-drawn SVG charts (line and, for the five new cases, a
+  hand-rolled grouped-bar primitive) with hover tooltips and direct labels,
+  and a play/scrub transport control on the two time-series cases (storm,
+  free-wind). Built following the project's `dataviz` discipline throughout —
+  single-axis charts only (the original React version's dual-axis weather
+  chart is *not* replicated here; temperature and wind speed are two separate
+  small multiples instead), a validated categorical pair (`#1097ba` glacier
+  cyan for the efficient/guarded policy, `#c9793a` ember amber for
+  legacy/unguarded — CVD ΔE 17.5, checked with `scripts/validate_palette.js`),
+  and status colors (danger `#bc2a49`, confirm `#1f9c48`) reserved and never
+  reused as series identity. Since this artifact is hand-rolled SVG with no
+  animation library, the Recharts entrance-animation freeze bug (below) does
+  not apply to it — verified each of the nine tabs directly in a browser
+  instead. **Until someone has update access to the original link, treat this
+  one as the actively maintained scenario-explorer artifact** — and keep it
+  in sync with `scripts/generate_scenarios.py` the same way as the UI's own
+  copy.
 
-`scripts/generate_scenarios.py` reproduces the exact data behind all four
-scenario-explorer cases and is checked against the published data byte-for-byte
-(only unused display fields differ). Run it after changing anything upstream of
-these scenarios and diff the output before republishing the artifact — three
-real bugs were found building these (two mismatched simulation
-seed/period/start-date alignments producing fabricated events, one climate-generator
-non-reproducibility across differing `periods` values with the same seed) and
-none of them were obvious from the numbers alone; they were caught only by
-re-deriving each scenario's timing independently before trusting it.
+`scripts/generate_scenarios.py` reproduces the exact data behind all nine
+scenario-explorer cases (the original four are checked against the once-
+published data byte-for-byte, only unused display fields differing; the five
+added later are fresh evaluations that do *not* match this document's earlier
+published numbers exactly — see the Phase 6 section above for why). Run it
+after changing anything upstream of these scenarios and diff the output
+before republishing the artifact — three real bugs were found building the
+original four (two mismatched simulation seed/period/start-date alignments
+producing fabricated events, one climate-generator non-reproducibility across
+differing `periods` values with the same seed), plus the curtailment-label
+and Recharts-animation-freeze bugs found building the five added later (see
+above); none of them were obvious from the numbers alone.
 
 **These same four scenarios are now also a tab inside the live operator UI**
 (Phase 6, above) — not a replacement for the standalone artifact (which stays
