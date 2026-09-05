@@ -37,6 +37,20 @@ from allotrope.experiment import ExperimentTracker
 LOG_EVERY = 500
 
 
+def _checkpoint_dict(
+    agent_kind: str, station: str, obs_dim: int, n_g: int, dispatch_dim: int, dqn: BranchingDQN, sddpg: SDDPG
+) -> dict:
+    return {
+        "agent_kind": agent_kind,
+        "station": station,
+        "obs_dim": obs_dim,
+        "n_gensets": n_g,
+        "dispatch_dim": dispatch_dim,
+        "dqn": dqn.state_dict(),
+        "sddpg": sddpg.state_dict(),
+    }
+
+
 def build_agents(env: PolarMicrogridEnv, seed: int) -> tuple[BranchingDQN, SDDPG]:
     obs_dim = env.observation_space.shape[0]
     n_g = len(env.cfg.gensets)
@@ -56,6 +70,7 @@ def train(
     buffer_capacity: int,
     runs_dir: Path,
     init_checkpoint: Path | None = None,
+    checkpoint_every: int = 0,
 ) -> Path:
     """Train, optionally warm-started from an existing checkpoint's weights.
 
@@ -66,6 +81,19 @@ def train(
     `allotrope.evaluate.load_checkpoint` uses. `None` (the default)
     reproduces this function's exact prior behaviour: every existing
     caller is unaffected.
+
+    `checkpoint_every` (0 = disabled, the prior behaviour) overwrites the
+    same `checkpoint.pt` this function already writes at the end, every
+    that many steps, so a training run killed partway through (an
+    interrupted machine, not a code failure) loses at most that many
+    steps' progress instead of the entire run. `BranchingDQN.state_dict()`
+    and `SDDPG.state_dict()` already carry `env_steps`/`train_steps`, so
+    resuming via `--init-checkpoint` on this intermediate file preserves
+    the epsilon-decay schedule and target-network update cadence exactly
+    -- it does not preserve the replay buffer or optimizer momentum, which
+    this checkpoint schema was never designed to carry, so a resumed run
+    is not bit-identical to an uninterrupted one, only continued from the
+    same learned weights.
     """
     torch.manual_seed(seed)
     rng = np.random.default_rng(seed)
@@ -141,17 +169,15 @@ def train(
             return_str = f"{mean_return:8.3f}" if mean_return is not None else "     n/a"
             print(f"step {step:>7}/{total_steps}  return[-10]={return_str}  {metrics}")
 
+        if checkpoint_every and step % checkpoint_every == 0 and step != total_steps:
+            torch.save(
+                _checkpoint_dict(agent_kind, station, obs_dim, n_g, dispatch_dim, dqn, sddpg),
+                tracker.dir / "checkpoint.pt",
+            )
+
     checkpoint_path = tracker.dir / "checkpoint.pt"
     torch.save(
-        {
-            "agent_kind": agent_kind,
-            "station": station,
-            "obs_dim": obs_dim,
-            "n_gensets": n_g,
-            "dispatch_dim": dispatch_dim,
-            "dqn": dqn.state_dict(),
-            "sddpg": sddpg.state_dict(),
-        },
+        _checkpoint_dict(agent_kind, station, obs_dim, n_g, dispatch_dim, dqn, sddpg),
         checkpoint_path,
     )
     final_metrics = {
@@ -179,6 +205,12 @@ def main() -> None:
     parser.add_argument(
         "--init-checkpoint", default=None, help="warm-start from this checkpoint's weights"
     )
+    parser.add_argument(
+        "--checkpoint-every",
+        type=int,
+        default=0,
+        help="overwrite checkpoint.pt every N steps (0 = only at the end, the prior default)",
+    )
     args = parser.parse_args()
 
     train(
@@ -191,6 +223,7 @@ def main() -> None:
         buffer_capacity=args.buffer_capacity,
         runs_dir=Path(args.runs_dir),
         init_checkpoint=Path(args.init_checkpoint) if args.init_checkpoint else None,
+        checkpoint_every=args.checkpoint_every,
     )
 
 
