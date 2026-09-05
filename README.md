@@ -48,6 +48,13 @@ Only model parameters cross the station's 4 MHz satellite link during
 federated training (`allotrope.agents.federated`); all inference runs on
 station.
 
+Operators see the station through a web UI (`webapp/frontend`) served by a
+read-only API (`allotrope.api`). That API never calls `Dispatch` — the station
+service already drives its own control loop, and a second caller would
+double-step the plant — so it reads only: `Observe` over gRPC for per-genset
+and per-pack detail, the telemetry and safety topics over MQTT, and the
+`telemetry` table for history.
+
 ## Status
 
 All five phases are done, including the container stack — `docker compose up`
@@ -71,6 +78,8 @@ checkpoint).
 | gRPC actuation interface | done |
 | MQTT telemetry link, TimescaleDB bridge | done |
 | Containers, Grafana HMI | **done — run end to end**, real telemetry confirmed in TimescaleDB |
+| Web API (FastAPI: station config, telemetry history, live WebSocket feed) | done — run against the live stack |
+| Operator web UI (React + Astryx), the primary demo surface | done — run against the live stack |
 
 ## Results so far
 
@@ -240,6 +249,17 @@ for exactly what that confirmed:
 docker compose -f deploy/docker-compose.yml up --build
 ```
 
+That brings up the web API on `localhost:8000` alongside Grafana on
+`localhost:3000`. The operator UI runs from its own toolchain — deliberately
+not containerised, so a demo never waits on an image build:
+
+```bash
+cd webapp/frontend && npm install && npm run dev
+```
+
+Then open `http://localhost:5173`. Vite proxies `/api` and `/ws` to the API
+container, so no CORS configuration exists on either side.
+
 ## Layout
 
 ```
@@ -254,6 +274,8 @@ allotrope/
   network/       the OpenDSS twin and the Volt-VAr / Volt-Watt fallback
   rpc/           the gRPC actuation interface (proto + server + client)
   mqtt/          telemetry pub/sub and the TimescaleDB bridge
+  api/           the read-only web API (FastAPI) the operator UI runs on
+webapp/frontend/ the operator UI: React 19 + Astryx, Vite, its own toolchain
 deploy/          Dockerfile, docker-compose, Grafana provisioning, DB schema
 docs/            calibration, design notes, and the project bible
 scripts/         entry points

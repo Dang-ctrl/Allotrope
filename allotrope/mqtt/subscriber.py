@@ -44,14 +44,20 @@ class TelemetrySubscriber:
         self._topic_to_station = {telemetry_topic(sid): sid for sid in station_ids}
 
         self._client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+        self._client.on_connect = self._on_connect
         self._client.on_message = self._on_message
         self._client.connect(host, port, keepalive=60)
-        for topic in self._topic_to_station:
-            self._client.subscribe(topic)
         self._client.loop_start()
 
     def on_telemetry(self, callback: TelemetryCallback) -> None:
         self._callbacks.append(callback)
+
+    def _on_connect(self, client, userdata, flags, reason_code, properties) -> None:
+        # Re-subscribing here, not only in __init__, is what makes this
+        # survive a broker restart: a fresh MQTT session drops every prior
+        # subscription, and paho does not restore them on its own reconnect.
+        for topic in self._topic_to_station:
+            client.subscribe(topic)
 
     def _on_message(self, client, userdata, message) -> None:
         station_id = self._topic_to_station.get(message.topic)

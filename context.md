@@ -5,7 +5,7 @@ of the project: where things stand, how to run them, what has been decided, and
 what is open. For *what the project is* and why it is built the way it is, read
 [docs/PROJECT_BIBLE.md](docs/PROJECT_BIBLE.md).
 
-Last updated: 2026-09-05, end of Phase 5 (autonomous overnight session).
+Last updated: 2026-09-05, end of Phase 6 (the operator UI).
 
 ---
 
@@ -13,21 +13,32 @@ Last updated: 2026-09-05, end of Phase 5 (autonomous overnight session).
 
 | | |
 |---|---|
-| Repo | https://github.com/Dang-ctrl/Allotrope (public, `main`) |
-| Local | `E:\CODE\Allotrope` |
-| Phase | **5 of 5, and the container stack has been run for real** — see caveats below |
-| Tests | 204 passing |
+| Repo | https://github.com/Vedanthdamn/Allotrope (public, `main`) |
+| Local | `E:\CODE\Allotrope` (Windows) and `~/Allotrope` (macOS, arm64) |
+| Phase | **6: the stack runs, and there is a UI over it** — see caveats below |
+| Tests | 213 passing |
 | Commits | `db4b9ab` Plant · `6d42c9b` Guarantee · `d0f9ca9` Docs · `14e4303` Agents · `6f11585` Twin · `ca028cf` System · `c35a68a` Phase 3 results · `8866e8d` Federated checkpoint fix |
 
 **This was an autonomous overnight session** (user asked to "complete the project" while asleep, using judgment for decisions without stopping to ask). Everything below was built, tested, committed, and pushed to `main` without further confirmation, per that instruction. The user has not reviewed this batch of work — it is large (11 commits, ~7 500 lines) and everything in it should be treated as freshly landed rather than settled, especially the two negative/partial results (federated training, Phase 5 infrastructure) called out below.
 
 ## Environment
 
-Python **3.11** in a venv at `.venv`. The machine default `python` is 3.13, which has **no pip**; 3.11 does.
+Python **3.11** in a venv at `.venv`. On the Windows machine the default `python` is 3.13, which has **no pip**; 3.11 does.
 
 ```bash
-.venv/Scripts/python.exe -m pytest -q
+.venv/Scripts/python.exe -m pytest -q      # Windows
+.venv/bin/python -m pytest -q              # macOS
 ```
+
+The whole suite has now been reproduced from a clean checkout on **macOS (arm64,
+Homebrew Python 3.11)** with nothing but `python3.11 -m venv .venv` and
+`pip install -e ".[dev]"` — no manual package installs, no platform-specific
+fixes. `run_baseline.py` reproduces the documented Maitri and Bharati numbers
+there bit for bit.
+
+The **Node toolchain** (for `webapp/frontend`) is separate and only needed for
+the UI: Node 25 / npm 11 here, though anything modern enough for Vite 8 and
+React 19 will do.
 
 Installed beyond Phase 1–2: `torch` 2.14 (CPU-only — deliberate, the networks are
 small 128-unit MLPs and gain nothing from a GPU), `grpcio` + `grpcio-tools`,
@@ -156,10 +167,45 @@ containers and the bridge container crashed on import within a second of
 starting in a fresh build. Fixed by declaring both as real dependencies. See
 `deploy/README.md` for the full verification table.
 
+## Phase 6 — the operator UI
+
+Two new pieces, both run against the live container stack rather than mocks:
+
+- **`allotrope/api/`** — a read-only FastAPI service (new `api` container, port
+  8000). It never calls `Dispatch` (that would double-step the plant, since the
+  station service already drives it); it polls gRPC `Observe`, subscribes to the
+  telemetry *and* safety MQTT topics, and reads the `telemetry` table for
+  history. Routes: `/api/stations[/{id}]`,
+  `/api/stations/{id}/telemetry/history|latest`, `/ws/stations/{id}`,
+  `/api/health`.
+- **`webapp/frontend/`** — React 19 + Meta's Astryx design system, Vite, run via
+  `npm run dev` and deliberately **not** containerised (a demo shouldn't wait on
+  an image build). Vite proxies `/api` and `/ws` to the API container, so there
+  is no CORS configuration anywhere.
+
+Both verified in a browser against both stations: live telemetry, per-genset
+wet-stack deposit, per-pack battery SoC, history charts, and a live safety feed
+showing real `raised_setpoint_to_cover_critical_load` interventions.
+
+**A real bug came out of this.** `TelemetrySubscriber` subscribed to its topics
+only in `__init__`, never in an `on_connect` callback. paho reconnects to a
+restarted broker on its own, but a reconnect is a *fresh MQTT session* with no
+subscriptions, and paho does not restore them — so after any broker restart the
+client reconnected, looked healthy, and never received another message.
+Observed for real: `docker compose restart mosquitto`, and the `telemetry` table
+stopped growing while every container still read `Up`. Both subscribers now
+subscribe in `on_connect`;
+`test_subscriber_resubscribes_after_a_broker_restart` and its safety-topic twin
+restart a real embedded broker mid-test to keep it that way. Re-verified end to
+end afterwards: rows resume within ~45 s of a broker restart, unattended.
+
 ## Judge-facing artifacts
 
 Two published Claude Artifacts exist for demoing this project, both driven by
-real data, none of it narrated:
+real data, none of it narrated. They are the portable surface — they need no
+running stack, so they work from a phone or a projector with no network. The
+operator UI above is the complementary live one: it needs the containers up,
+but it shows the system actually running rather than a replay.
 
 - **Console** (`https://claude.ai/code/artifact/2afb7cc5-ad1d-4b80-961a-4244de4a5979`)
   — the results dashboard: baseline comparison, safety audit table, held-out
@@ -212,9 +258,19 @@ re-deriving each scenario's timing independently before trusting it.
   the trained agent, versus the incumbent's 24). This is priced in the reward
   and could be pushed further with a higher `genset_start_per_event` weight or
   more training; not pursued further in this session for diminishing returns.
-- **Nothing has been pushed.** All six commits above are local to `main`.
-  Confirm with the user before pushing — this is a large, unreviewed batch of
-  autonomous work landing on a public repo with four other collaborators.
+- **The UI is unauthenticated and single-viewer-tested.** Anyone who can reach
+  port 8000 or 5173 can read the station's telemetry. Fine for a laptop demo,
+  not for a station. It has also only been driven by one browser at a time,
+  never over a constrained satellite-like link.
+- **The checkpoints are not in the repo** (`checkpoints/` is gitignored, which
+  is correct — they are 250 kB of weights, not source). Retraining both
+  stations from scratch takes about 8 minutes on an M-series laptop:
+  `python scripts/train_agent.py --station <id> --episodes 500 --out
+  checkpoints/<id>.pt`. The container stack currently runs the rule-based
+  controller, not a checkpoint.
+- **Two people fixed the same dependency bug independently** on 2026-09-05
+  (`protobuf`/`psycopg`, commit `aa0e82b` and an unpushed local branch), which
+  cost a rebuild. Pull before starting work on the container stack.
 
 ## Conventions (unchanged from Phase 1–2)
 

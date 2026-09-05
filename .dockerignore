@@ -8,3 +8,6 @@ checkpoints/
 tests/
 docs/
 *.md
+# the web frontend is served by its own toolchain, never from this image --
+# and node_modules would otherwise be walked as part of the build context
+webapp/

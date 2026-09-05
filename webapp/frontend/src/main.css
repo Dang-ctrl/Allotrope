@@ -1,0 +1,10 @@
+@import '@astryxdesign/core/reset.css';
+@import '@astryxdesign/core/astryx.css';
+@import '@astryxdesign/theme-neutral/theme.css';
+
+html,
+body,
+#root {
+  height: 100%;
+  background: var(--color-background-wash, #f7f7f8);
+}
