@@ -54,14 +54,18 @@ class TelemetrySubscriber:
         self._client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
         if username is not None:
             self._client.username_pw_set(username, password)
+        self._client.on_connect = self._on_connect
         self._client.on_message = self._on_message
         self._client.connect(host, port, keepalive=60)
-        for topic in self._topic_to_station:
-            self._client.subscribe(topic)
         self._client.loop_start()
 
     def on_telemetry(self, callback: TelemetryCallback) -> None:
         self._callbacks.append(callback)
+
+    def _on_connect(self, client, userdata, flags, reason_code, properties) -> None:
+        # Re-subscribe after broker reconnects, which starts a fresh MQTT session.
+        for topic in self._topic_to_station:
+            client.subscribe(topic)
 
     def _on_message(self, client, userdata, message) -> None:
         station_id = self._topic_to_station.get(message.topic)

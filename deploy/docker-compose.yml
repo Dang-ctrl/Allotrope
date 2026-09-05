@@ -122,5 +122,16 @@ services:
     depends_on:
       mosquitto: { condition: service_healthy }
 
+  api:
+    build: { context: .., dockerfile: deploy/Dockerfile }
+    command: >
+      scripts/run_api.py
+      --host 0.0.0.0 --port 8000
+      --mqtt-host mosquitto
+      --db-dsn postgresql://allotrope:allotrope@timescaledb:5432/allotrope
+      --grpc-targets maitri=station-maitri:50051 bharati=station-bharati:50051
+    ports: ["8000:8000"]
+    depends_on: [mosquitto, timescaledb, station-maitri, station-bharati]
+
 volumes:
   timescale_data:

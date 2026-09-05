@@ -14,6 +14,8 @@ from allotrope.mqtt.topics import model_update_topic, safety_topic, telemetry_to
 from tests.mqtt_broker import EmbeddedBroker
 
 TEST_PORT = 18831
+# used by test_subscriber_resubscribes_after_a_broker_restart, which needs its
+# own broker instance rather than the shared module-scoped fixture below
 
 
 @pytest.fixture(scope="module")
@@ -135,6 +137,45 @@ def test_a_corrupted_payload_is_dropped_not_raised(broker):
     raw.loop_stop()
     raw.disconnect()
     sub.close()
+
+
+def test_subscriber_resubscribes_after_a_broker_restart():
+    """A broker restart drops every prior subscription (the new broker process
+    starts every client on a fresh session) -- without re-subscribing in
+    on_connect rather than only in __init__, a subscriber that reconnects
+    stops receiving anything, silently, forever. This is what actually broke
+    telemetry end to end after a real `docker compose restart mosquitto`; it
+    must not regress. Uses its own broker instance (restarted mid-test), not
+    the module-scoped fixture the other tests share."""
+    port = TEST_PORT + 1
+    broker = EmbeddedBroker(port)
+    broker.start()
+    try:
+        received = []
+        sub = TelemetrySubscriber(["maitri"], host="127.0.0.1", port=port)
+        sub.on_telemetry(lambda station, t: received.append(t))
+        time.sleep(0.3)
+
+        pub = TelemetryPublisher("maitri", host="127.0.0.1", port=port)
+        pub.publish_telemetry({"seq": 1})
+        assert _wait_until(lambda: len(received) == 1)
+        pub.close()
+
+        broker.stop()
+        broker = EmbeddedBroker(port)  # a new process, same port -- like `docker compose restart`
+        broker.start()
+
+        assert _wait_until(lambda: sub._client.is_connected(), timeout=10.0)
+
+        pub = TelemetryPublisher("maitri", host="127.0.0.1", port=port)
+        pub.publish_telemetry({"seq": 2})
+        assert _wait_until(lambda: len(received) == 2, timeout=10.0)
+        assert received[1] == {"seq": 2}
+
+        pub.close()
+        sub.close()
+    finally:
+        broker.stop()
 
 
 def test_safety_reports_publish_on_their_own_topic(broker):
