@@ -219,16 +219,36 @@ concluding a reconnect has failed.
 **Added since**: a **Scenarios** tab inside the same UI (`webapp/frontend/src/scenarios/`),
 alongside the live "Live" view (a `SegmentedControl` in the top nav switches
 between them). It reads the static `public/scenarios.json` — a copy of
-`scripts/generate_scenarios.py`'s output, not live data — and renders each of
-the four scenarios below with its own chart(s): cumulative critical-unserved
-(storm), deposit/wet-stacking over time (wetstack), available-vs-used
-renewable (freeenergy), and voltage-vs-multiplier against the 1.10 pu ceiling
-(gridstress). All four verified rendering the correct story in a browser.
+`scripts/generate_scenarios.py`'s output, not live data. **Nine** scenarios now,
+up from the original four: storm+AI-failure, wet-stacking, free-energy,
+grid-stress, **the trained agent's held-out evaluation (Maitri and Bharati,
+run separately — they land on different points of the same trade-off, same as
+the docs' own framing)**, **the safety audit's five adversarial attacks**,
+**dual-chemistry battery cold-derating**, and **the federated-learning negative
+result**. All nine verified rendering the correct story in a browser, not just
+compiling.
 
 **`scenarios.json` is not regenerated automatically.** After running
 `scripts/generate_scenarios.py`, re-copy the output into
 `webapp/frontend/public/scenarios.json` by hand — there is no build step
 wiring the two together yet.
+
+**The new agent/federated scenarios are real re-evaluations run in this
+environment, not copies of the README's published numbers — and they don't
+agree with those numbers.** `checkpoints/maitri.pt` (trained earlier this
+session) barely clears the fuel bar against `EfficientRuleBased` (−0.4%,
+vs. the README's −1.8%) and **loses** on genset starts (+62/year, vs. the
+README's −22.9%) — a materially less flattering result than what's
+documented, from ordinary training-run variance (different machine, different
+run). `checkpoints/bharati.pt` still clears both bars, just by a smaller
+margin than published (−1.7% fuel, −82 starts vs. the README's −5.6%/−89%).
+The federated checkpoint (fresh 30-round run) is a negative result again,
+consistent with the documented one: fuel worse than rules at Maitri, roughly
+tied at Bharati, both stations far behind their own dedicated checkpoints.
+Safety held in every case, every held-out seed, both stations, all runs
+recorded. **Report the numbers actually measured, not the ones in the
+README** — training variance is real and expected, and the project's own
+convention is to say so rather than retrain until the story improves.
 
 **A real labelling bug was caught building the grid-stress view**: `curtailPv`/
 `curtailWind` in `scenarios.json` are the *fraction of power still allowed
@@ -239,12 +259,30 @@ which is its exact opposite. At 1× (no intervention needed) it read "curtail
 against the raw JSON that the corrected percentages climb from 0% at 1×–3× to
 100% at 6×, matching the `intervened` list exactly.
 
-Recharts' line-draw-in animation means a chart's `<path>` can have the correct
-`d` attribute in the DOM for a second or more before it's visually painted —
-a screenshot taken immediately after switching tabs can show empty-looking
-charts that are not actually broken. Verify via the DOM
-(`document.querySelectorAll('path.recharts-curve')`) before concluding a chart
-isn't rendering, not just a screenshot taken at t+0.
+**A real, more serious rendering bug — not just an animation delay — was found
+building the new charts, and it affects every Recharts `<Line>`/`<Area>`/`<Bar>`
+in this app, including the original four scenarios and the live dashboard's
+own charts.** Recharts' default mount-in animation (bars growing from zero
+height, lines morphing in from a flattened start path) can get **stuck
+partway and never complete** — observed repeatedly, reproducibly, surviving a
+full hard page reload, with correct *relative* proportions between series
+but every mark rendered at roughly 1/14th its true height, with axis ticks
+correctly labelling the real domain the whole time. (An earlier note in this
+file blamed a merely slow-to-paint animation for a *different*, actually
+harmless case — that explanation was wrong for this one: this freeze does not
+resolve on its own, however long you wait.) Suspected cause: an interaction
+between Recharts' animation state and React 18 StrictMode's deliberate
+mount/unmount/remount cycle in development. **Fixed by adding
+`isAnimationActive={false}` to every `<Line>`, `<Area>`, and `<Bar>` in the
+app** — there is no functional reason to animate in a chart over already-known,
+static or steadily-arriving data anyway. Verified fixed across all nine
+scenario tabs and the live dashboard after a hard reload. If a chart ever
+looks empty again: check `document.querySelectorAll('path.recharts-curve')` /
+`.recharts-bar-rectangle path` for a `d` attribute that's present but
+tiny/flat compared to what the axis labels imply — that pattern means this
+bug, not a data problem — and confirm any fix by comparing two measurements
+several seconds apart within one script (a stuck animation is stable between
+calls; a merely slow one visibly progresses).
 
 ## Judge-facing artifacts
 

@@ -28,15 +28,15 @@ export function LoadVsGensetChart({ rows }: { rows: TelemetryRow[] }) {
           <XAxis dataKey="time" tick={{ fontSize: 11 }} minTickGap={40} />
           <YAxis tick={{ fontSize: 11 }} />
           <Tooltip />
-          <Line type="monotone" dataKey="electrical_load_kw" name="Load" stroke="#f59e0b" dot={false} />
-          <Line type="monotone" dataKey="genset_kw" name="Genset" stroke="#22c55e" dot={false} />
+          <Line type="monotone" dataKey="electrical_load_kw" name="Load" stroke="#f59e0b" dot={false} isAnimationActive={false} />
+          <Line type="monotone" dataKey="genset_kw" name="Genset" stroke="#22c55e" dot={false} isAnimationActive={false} />
           <Line
             type="monotone"
             dataKey="renewable_used_kw"
             name="Renewable"
             stroke="#06b6d4"
-            dot={false}
-          />
+            dot={false} isAnimationActive={false}
+            />
         </LineChart>
       </ResponsiveContainer>
     </Card>

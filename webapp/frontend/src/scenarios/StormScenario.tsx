@@ -73,7 +73,7 @@ export function StormScenario({ rows }: { rows: StormRow[] }) {
               name="Guarded"
               stroke="#22c55e"
               dot={false}
-              strokeWidth={2}
+              strokeWidth={2} isAnimationActive={false}
             />
             <Line
               type="monotone"
@@ -81,7 +81,7 @@ export function StormScenario({ rows }: { rows: StormRow[] }) {
               name="Unguarded (control)"
               stroke="#ef4444"
               dot={false}
-              strokeWidth={2}
+              strokeWidth={2} isAnimationActive={false}
             />
           </LineChart>
         </ResponsiveContainer>
@@ -103,7 +103,7 @@ export function StormScenario({ rows }: { rows: StormRow[] }) {
               dataKey="temp"
               name="Air temp (°C)"
               stroke="#38bdf8"
-              dot={false}
+              dot={false} isAnimationActive={false}
             />
             <Line
               yAxisId="wind"
@@ -111,7 +111,7 @@ export function StormScenario({ rows }: { rows: StormRow[] }) {
               dataKey="wind"
               name="Wind (m/s)"
               stroke="#a78bfa"
-              dot={false}
+              dot={false} isAnimationActive={false}
             />
           </LineChart>
         </ResponsiveContainer>

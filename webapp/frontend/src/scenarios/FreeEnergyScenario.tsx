@@ -65,7 +65,7 @@ export function FreeEnergyScenario({ data }: { data: FreeEnergy }) {
               name="Available"
               stroke="#94a3b8"
               fill="#94a3b8"
-              fillOpacity={0.15}
+              fillOpacity={0.15} isAnimationActive={false}
             />
             <Line
               type="monotone"
@@ -73,7 +73,7 @@ export function FreeEnergyScenario({ data }: { data: FreeEnergy }) {
               name="Used, legacy"
               stroke="#ef4444"
               dot={false}
-              strokeWidth={2}
+              strokeWidth={2} isAnimationActive={false}
             />
             <Line
               type="monotone"
@@ -81,7 +81,7 @@ export function FreeEnergyScenario({ data }: { data: FreeEnergy }) {
               name="Used, efficient"
               stroke="#22c55e"
               dot={false}
-              strokeWidth={2}
+              strokeWidth={2} isAnimationActive={false}
             />
           </ComposedChart>
         </ResponsiveContainer>

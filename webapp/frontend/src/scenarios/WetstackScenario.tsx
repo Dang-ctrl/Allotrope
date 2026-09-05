@@ -65,16 +65,16 @@ export function WetstackScenario({ data }: { data: Wetstack }) {
                 name="Legacy"
                 stroke="#ef4444"
                 dot={false}
-                strokeWidth={2}
-              />
+                strokeWidth={2} isAnimationActive={false}
+            />
               <Line
                 type="monotone"
                 dataKey="depositEfficient"
                 name="Efficient"
                 stroke="#22c55e"
                 dot={false}
-                strokeWidth={2}
-              />
+                strokeWidth={2} isAnimationActive={false}
+            />
             </LineChart>
           </ResponsiveContainer>
         </Card>
@@ -94,16 +94,16 @@ export function WetstackScenario({ data }: { data: Wetstack }) {
                 name="Legacy"
                 stroke="#ef4444"
                 dot={false}
-                strokeWidth={2}
-              />
+                strokeWidth={2} isAnimationActive={false}
+            />
               <Line
                 type="monotone"
                 dataKey="wetStackEfficient"
                 name="Efficient"
                 stroke="#22c55e"
                 dot={false}
-                strokeWidth={2}
-              />
+                strokeWidth={2} isAnimationActive={false}
+            />
             </LineChart>
           </ResponsiveContainer>
         </Card>

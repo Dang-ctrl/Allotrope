@@ -55,10 +55,10 @@ export function GridStressScenario({ data }: { data: GridStress }) {
               strokeDasharray="4 4"
               label={{ value: '1.10 pu ceiling', position: 'insideTopRight', fontSize: 11, fill: '#ef4444' }}
             />
-            <Line type="monotone" dataKey="vPvRaw" name="PV bus, uncorrected" stroke="#f59e0b" strokeDasharray="4 2" dot={false} />
-            <Line type="monotone" dataKey="vPvFallback" name="PV bus, with fallback" stroke="#f59e0b" dot={false} strokeWidth={2} />
-            <Line type="monotone" dataKey="vWindRaw" name="Wind bus, uncorrected" stroke="#38bdf8" strokeDasharray="4 2" dot={false} />
-            <Line type="monotone" dataKey="vWindFallback" name="Wind bus, with fallback" stroke="#38bdf8" dot={false} strokeWidth={2} />
+            <Line type="monotone" dataKey="vPvRaw" name="PV bus, uncorrected" stroke="#f59e0b" strokeDasharray="4 2" dot={false} isAnimationActive={false} />
+            <Line type="monotone" dataKey="vPvFallback" name="PV bus, with fallback" stroke="#f59e0b" dot={false} strokeWidth={2} isAnimationActive={false} />
+            <Line type="monotone" dataKey="vWindRaw" name="Wind bus, uncorrected" stroke="#38bdf8" strokeDasharray="4 2" dot={false} isAnimationActive={false} />
+            <Line type="monotone" dataKey="vWindFallback" name="Wind bus, with fallback" stroke="#38bdf8" dot={false} strokeWidth={2} isAnimationActive={false} />
           </LineChart>
         </ResponsiveContainer>
       </Card>

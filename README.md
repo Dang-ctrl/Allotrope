@@ -55,8 +55,10 @@ double-step the plant — so it reads only: `Observe` over gRPC for per-genset
 and per-pack detail, the telemetry and safety topics over MQTT, and the
 `telemetry` table for history.
 
-The same UI also has a **Scenarios** tab — the same four played-back
-simulations published as a standalone artifact (below), reproduced from
+The same UI also has a **Scenarios** tab — nine played-back cases (the four
+in the standalone artifact below, plus the trained agent's held-out
+evaluation per station, the safety audit's adversarial attacks, dual-chemistry
+battery cold-derating, and the federated-learning result), reproduced from
 `scripts/generate_scenarios.py`'s output and viewable without leaving the
 live dashboard.
 
