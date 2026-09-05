@@ -1,0 +1,73 @@
+# The full stack: MQTT for telemetry, TimescaleDB for storage, Grafana for
+# the HMI, and one container per station running its plant + guarded
+# controller loop in-process (see docs/control-plane.md for why there is no
+# remote command-injection path here -- the gRPC control plane distributes
+# state, it does not drive actuation).
+#
+# Not exercised end to end in the development sandbox this project was built
+# in -- that environment has the Docker CLI but no running daemon. Every piece
+# that does not require an actual container runtime (MQTT pub/sub, the
+# TimescaleDB bridge's SQL, the gRPC control plane) is unit- and
+# integration-tested under tests/; this compose file is the infrastructure
+# that wires the same, already-tested Python together for a real deployment.
+#
+# Run with: docker compose -f deploy/docker-compose.yml up --build
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    ports: ["1883:1883"]
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_USER: allotrope
+      POSTGRES_PASSWORD: allotrope
+      POSTGRES_DB: allotrope
+    ports: ["5432:5432"]
+    volumes:
+      - ./init-timescaledb.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - timescale_data:/var/lib/postgresql/data
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    ports: ["3000:3000"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: allotrope
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on: [timescaledb]
+
+  bridge:
+    build: { context: .., dockerfile: deploy/Dockerfile }
+    command: >
+      scripts/run_timescale_bridge.py
+      --stations maitri bharati
+      --mqtt-host mosquitto
+      --db-dsn postgresql://allotrope:allotrope@timescaledb:5432/allotrope
+    depends_on: [mosquitto, timescaledb]
+
+  station-maitri:
+    build: { context: .., dockerfile: deploy/Dockerfile }
+    command: >
+      scripts/run_station_service.py
+      --station maitri
+      --mqtt-host mosquitto
+      --interval-s 2.0
+    depends_on: [mosquitto]
+
+  station-bharati:
+    build: { context: .., dockerfile: deploy/Dockerfile }
+    command: >
+      scripts/run_station_service.py
+      --station bharati
+      --mqtt-host mosquitto
+      --interval-s 2.0
+    depends_on: [mosquitto]
+
+volumes:
+  timescale_data:

@@ -12,5 +12,6 @@ data/generated/
 .DS_Store
 *.pptx
 runs/
+checkpoints/
 *.pt
 *.onnx
