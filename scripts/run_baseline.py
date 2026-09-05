@@ -16,6 +16,7 @@ import pandas as pd
 
 from allotrope.config import load_station
 from allotrope.control.baseline import EfficientRuleBased, LegacyNPlusOne
+from allotrope.evidence import record_result
 from allotrope.sim.runner import build_plant, compare, run_episode
 
 
@@ -47,6 +48,28 @@ def main() -> None:
     print("\nefficient rule-based versus legacy N+1")
     print(f"  fuel          {fuel_saved:9.0f} L   ({fuel_saved / legacy.summary['fuel_l']:6.1%})")
     print(f"  black carbon  {bc_saved:9.0f} g   ({bc_saved / legacy.summary['black_carbon_g']:6.1%})")
+
+    record = record_result(
+        station=cfg.site.name,
+        seeds=args.seed,
+        metric_name="fuel_l_saved",
+        metric_value=fuel_saved,
+        description=(
+            f"{args.periods} steps at {args.freq} starting {args.start}, "
+            "EfficientRuleBased vs LegacyNPlusOne, scripts/run_baseline.py"
+        ),
+        baseline_name="LegacyNPlusOne.fuel_l",
+        baseline_value=legacy.summary["fuel_l"],
+        source_script="scripts/run_baseline.py",
+        extra={
+            "efficient_fuel_l": efficient.summary["fuel_l"],
+            "black_carbon_g_saved": bc_saved,
+            "periods": args.periods,
+            "freq": args.freq,
+            "start": args.start,
+        },
+    )
+    print(f"\nevidence recorded: runs/evidence/{record.experiment_id}.json")
 
     if cfg.fuel_budget:
         budget_kl = cfg.fuel_budget.get("seasonal_jet_a1_kl")
