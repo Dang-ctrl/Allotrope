@@ -18,3 +18,7 @@ checkpoints/
 node_modules/
 dist/
 *.tsbuildinfo
+
+# scripts/generate_scenarios.py's output at the repo root -- the copy served
+# by the UI is webapp/frontend/public/scenarios.json, committed deliberately
+/scenarios.json

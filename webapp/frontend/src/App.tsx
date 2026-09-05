@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { AppShell } from '@astryxdesign/core/AppShell'
 import { TopNav, TopNavHeading } from '@astryxdesign/core/TopNav'
+import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl'
 import { Grid } from '@astryxdesign/core/Grid'
 import { Spinner } from '@astryxdesign/core/Spinner'
 import { fetchStations } from './api/client'
@@ -13,7 +14,10 @@ import { GensetGrid } from './components/GensetGrid'
 import { BatteryGauges } from './components/BatteryGauges'
 import { TelemetryCharts } from './components/TelemetryCharts'
 import { SafetyFeed } from './components/SafetyFeed'
+import { ScenarioExplorer } from './scenarios/ScenarioExplorer'
 import type { StationConfig } from './types'
+
+type View = 'live' | 'scenarios'
 
 function Dashboard({ station }: { station: StationConfig }) {
   const live = useLiveStation(station.id)
@@ -34,6 +38,7 @@ function Dashboard({ station }: { station: StationConfig }) {
 export default function App() {
   const [stations, setStations] = useState<StationConfig[] | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
+  const [view, setView] = useState<View>('live')
 
   useEffect(() => {
     fetchStations().then((data) => {
@@ -51,15 +56,26 @@ export default function App() {
         <TopNav
           label="Allotrope navigation"
           heading={<TopNavHeading heading="Allotrope Mission Control" />}
+          startContent={
+            <SegmentedControl value={view} onChange={(v) => setView(v as View)} label="View">
+              <SegmentedControlItem value="live" label="Live" />
+              <SegmentedControlItem value="scenarios" label="Scenarios" />
+            </SegmentedControl>
+          }
           endContent={
-            stations && (
-              <StationSwitcher stations={stations} value={selected!} onChange={setSelected} />
-            )
+            view === 'live' &&
+            stations && <StationSwitcher stations={stations} value={selected!} onChange={setSelected} />
           }
         />
       }
     >
-      {station ? <Dashboard station={station} /> : <Spinner label="Loading station data" />}
+      {view === 'scenarios' ? (
+        <ScenarioExplorer />
+      ) : station ? (
+        <Dashboard station={station} />
+      ) : (
+        <Spinner label="Loading station data" />
+      )}
     </AppShell>
   )
 }

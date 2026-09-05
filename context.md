@@ -216,6 +216,36 @@ frozen at the 60-second mark. That is paho's exponential reconnect backoff
 (doubling to a 120 s ceiling), not a second bug. Wait out the ceiling before
 concluding a reconnect has failed.
 
+**Added since**: a **Scenarios** tab inside the same UI (`webapp/frontend/src/scenarios/`),
+alongside the live "Live" view (a `SegmentedControl` in the top nav switches
+between them). It reads the static `public/scenarios.json` — a copy of
+`scripts/generate_scenarios.py`'s output, not live data — and renders each of
+the four scenarios below with its own chart(s): cumulative critical-unserved
+(storm), deposit/wet-stacking over time (wetstack), available-vs-used
+renewable (freeenergy), and voltage-vs-multiplier against the 1.10 pu ceiling
+(gridstress). All four verified rendering the correct story in a browser.
+
+**`scenarios.json` is not regenerated automatically.** After running
+`scripts/generate_scenarios.py`, re-copy the output into
+`webapp/frontend/public/scenarios.json` by hand — there is no build step
+wiring the two together yet.
+
+**A real labelling bug was caught building the grid-stress view**: `curtailPv`/
+`curtailWind` in `scenarios.json` are the *fraction of power still allowed
+through* (1.0 = no curtailment, 0.0 = fully curtailed) — the first version of
+`GridStressScenario.tsx` displayed that number directly as "% curtailed",
+which is its exact opposite. At 1× (no intervention needed) it read "curtail
+100%", which is backwards. Fixed to display `(1 - fraction) * 100`; verified
+against the raw JSON that the corrected percentages climb from 0% at 1×–3× to
+100% at 6×, matching the `intervened` list exactly.
+
+Recharts' line-draw-in animation means a chart's `<path>` can have the correct
+`d` attribute in the DOM for a second or more before it's visually painted —
+a screenshot taken immediately after switching tabs can show empty-looking
+charts that are not actually broken. Verify via the DOM
+(`document.querySelectorAll('path.recharts-curve')`) before concluding a chart
+isn't rendering, not just a screenshot taken at t+0.
+
 ## Judge-facing artifacts
 
 Two published Claude Artifacts exist for demoing this project, both driven by
@@ -248,6 +278,14 @@ seed/period/start-date alignments producing fabricated events, one climate-gener
 non-reproducibility across differing `periods` values with the same seed) and
 none of them were obvious from the numbers alone; they were caught only by
 re-deriving each scenario's timing independently before trusting it.
+
+**These same four scenarios are now also a tab inside the live operator UI**
+(Phase 6, above) — not a replacement for the standalone artifact (which stays
+useful precisely because it needs no running stack), but the same
+`scenarios.json` rendered live-side for a demo that's already got the
+containers up. Keep both in sync: regenerate the script's output, diff it,
+republish the artifact, *and* re-copy the file into
+`webapp/frontend/public/scenarios.json`.
 ## Open questions and known gaps
 
 - **Bharati agent: done**, results above. **Federated training: done, and

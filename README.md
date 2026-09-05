@@ -55,6 +55,11 @@ double-step the plant — so it reads only: `Observe` over gRPC for per-genset
 and per-pack detail, the telemetry and safety topics over MQTT, and the
 `telemetry` table for history.
 
+The same UI also has a **Scenarios** tab — the same four played-back
+simulations published as a standalone artifact (below), reproduced from
+`scripts/generate_scenarios.py`'s output and viewable without leaving the
+live dashboard.
+
 ## Status
 
 All five phases are done, including the container stack — `docker compose up`
