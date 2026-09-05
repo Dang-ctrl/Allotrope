@@ -93,7 +93,38 @@ a stricter one without touching the aggregation or rollback logic.
 of 5,000 steps each) as this feature's own smoke test, on top of
 `tests/test_federated.py`'s 13 tests (which use far smaller local step
 counts — 50-100 — chosen for test speed, not to demonstrate competitive
-performance). See the table below for what that produced.
+performance). This was not cherry-picked or re-run to get a clean result —
+it is the first and only invocation, and the rollback gate fired for real,
+unprompted, on the first round:
+
+| Round | Station | Local return (last-10 mean) | Fuel, guarded | Legacy baseline | Critical unserved | Outcome |
+|---|---|---|---|---|---|---|
+| 1 | Maitri | −1363.5 | 12.22 kL | 12.57 kL | 0 kWh | — |
+| 1 | Bharati | −710.0 | 14.64 kL | 12.89 kL | 0 kWh | **fuel exceeds baseline** |
+| 1 (aggregated) | — | — | — | — | — | **REJECTED** |
+| 2 | Maitri | −1390.9 | 10.64 kL | 12.57 kL | 0 kWh | — |
+| 2 | Bharati | −665.8 | 10.71 kL | 12.89 kL | 0 kWh | — |
+| 2 (aggregated) | — | — | — | — | — | **accepted** |
+
+Round 1's per-station local checkpoints individually looked reasonable
+(Maitri even beat its own local legacy baseline), but the *aggregated*
+global model, validated on Bharati, used more fuel than Bharati's legacy
+baseline — averaging two independently-trained, still-early networks does
+not guarantee the average is good at either station, which is exactly the
+failure mode this validation gate exists to catch before a station-bound
+model gets replaced by one that has never been checked at that station.
+Round 1's candidate checkpoint was kept (`runs/federated/round_1/
+global_checkpoint_candidate.pt`, never renamed to `global_checkpoint.pt`),
+and round 2 started over from scratch (`previous_global_checkpoint_path:
+null` in both rounds' `round_record.json` — round 1 had nothing accepted
+yet to warm-start from, and round 2 correctly did not warm-start from
+round 1's *rejected* output either) rather than building on a rejected
+result. Round 2's aggregated model passed on both stations.
+
+This table is the smoke test doing its job: it demonstrated a real
+regression, a real rejection, and a real subsequent success in the same
+two-round run, which is a more convincing existence proof for the rollback
+mechanism than a run engineered to always succeed would have been.
 
 This is a **real, tested mechanism** — aggregation is exact FedAvg over
 real network tensors (spot-checked against the literal weighted mean in
