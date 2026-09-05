@@ -129,7 +129,10 @@ def _rl_controller_factory(checkpoint_path: Path, guarded: bool) -> Callable[[St
 
         dqn, sddpg, _ = load_checkpoint(checkpoint_path)
         hybrid = HybridAgent(cfg, dqn, sddpg, deterministic=True)
-        return GuardedController(cfg, agent=hybrid) if guarded else hybrid
+        # enforce_latency_budget=False: an offline scenario replay, not a real
+        # control loop -- the evaluation machine's CPU scheduling must not
+        # change which seeds a policy is scored as having handled well.
+        return GuardedController(cfg, agent=hybrid, enforce_latency_budget=False) if guarded else hybrid
 
     return factory
 

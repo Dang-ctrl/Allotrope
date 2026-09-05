@@ -64,7 +64,12 @@ def main() -> None:
     controllers = {
         "legacy_n_plus_one": LegacyNPlusOne(cfg),
         "efficient_rule_based": EfficientRuleBased(cfg),
-        "hybrid_safe": GuardedController(cfg, agent=hybrid),
+        # enforce_latency_budget=False: this is an offline replay, not a real
+        # control loop, so the machine's CPU scheduling on this particular
+        # run must not change the answer -- see GuardedController's
+        # docstring on the flag. Without this, the same (checkpoint, seed)
+        # produces a different genset-starts count on every invocation.
+        "hybrid_safe": GuardedController(cfg, agent=hybrid, enforce_latency_budget=False),
         "hybrid_unsafe": hybrid,
     }
 

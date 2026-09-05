@@ -144,6 +144,28 @@ class GuardedController:
     agent: Any | None = None
     latency_budget_ms: float = 10.0
     """A late answer is a wrong answer: the gRPC control path budgets 10 ms."""
+    enforce_latency_budget: bool = True
+    """Whether exceeding `latency_budget_ms` triggers the fallback.
+
+    True (the default) is what a real, time-boxed control loop needs, and
+    is exactly what was in effect everywhere before this flag existed --
+    no deployed behaviour changes. Real-time enforcement of a wall-clock
+    budget is, by construction, a function of the machine's scheduling
+    behaviour at the moment of the call, not just of the observation and
+    the checkpoint -- and that is correct for actual control, where a slow
+    answer really is a wrong answer.
+
+    It is the wrong property for an *offline evaluation* run, though: two
+    runs of `python -m allotrope.evaluate` against the same checkpoint and
+    seed are supposed to answer "what does this policy do," not "how busy
+    was this machine while replaying it." Set this to False there (see
+    `allotrope.evaluate`) so a checkpoint's reported genset-starts, fuel,
+    and every other evaluation metric are a pure function of
+    (checkpoint, seed) again, latency is still measured and recorded in
+    `GuardStats.max_latency_ms` either way, and the projection layer still
+    runs unconditionally regardless of this flag -- only the criterion for
+    falling back to the deterministic controller changes.
+    """
     inverter_layer: InverterVoltageLayer | None = None
     """Inverter-level Volt-Watt curtailment (allotrope.safety.voltage), for a
     station with a network model. None (the default) reproduces this class's
@@ -208,7 +230,7 @@ class GuardedController:
 
         latency_ms = (time.perf_counter() - start) * 1000.0
         self.stats.max_latency_ms = max(self.stats.max_latency_ms, latency_ms)
-        if latency_ms > self.latency_budget_ms:
+        if self.enforce_latency_budget and latency_ms > self.latency_budget_ms:
             return None, FallbackReason.AGENT_TIMED_OUT
         if not self._is_well_formed(command):
             return None, FallbackReason.AGENT_RETURNED_INVALID

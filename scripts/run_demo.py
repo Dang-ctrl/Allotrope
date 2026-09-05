@@ -95,7 +95,9 @@ def section_2_the_agent(cfg, checkpoint: str | None, seed: int, periods: int) ->
 
     controllers = {
         "efficient_rule_based": EfficientRuleBased(cfg),
-        "hybrid_safe": GuardedController(cfg, agent=hybrid),
+        # enforce_latency_budget=False: an offline demo replay, not a real
+        # control loop -- see GuardedController's docstring on the flag.
+        "hybrid_safe": GuardedController(cfg, agent=hybrid, enforce_latency_budget=False),
     }
     summaries = {}
     for name, controller in controllers.items():

@@ -127,7 +127,11 @@ def default_validator(
     for station in stations:
         cfg = load_station(station)
         hybrid = HybridAgent(cfg, dqn, sddpg, deterministic=True)
-        guard = GuardedController(cfg, agent=hybrid)
+        # enforce_latency_budget=False: this accept/reject gate must be a pure
+        # function of (checkpoint, seed) -- a round should never pass or fail
+        # the fuel-regression check depending on how busy the validation
+        # machine happened to be.
+        guard = GuardedController(cfg, agent=hybrid, enforce_latency_budget=False)
         plant = build_plant(cfg, periods=periods, seed=validation_seed)
         result = run_episode(plant, guard)
         summary = result.summary
